@@ -1,0 +1,1 @@
+"""Tech Trend Researcher package."""

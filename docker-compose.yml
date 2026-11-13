@@ -1,0 +1,11 @@
+services:
+  tech-trend-researcher:
+    build: .
+    container_name: tech-trend-researcher
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      # Read-only mount to ai-hardware-bot's SQLite database directory (for WAL companion files)
+      - /path/to/ai-hardware-bot/data:/data/ai_hardware_bot:ro
+    restart: unless-stopped
