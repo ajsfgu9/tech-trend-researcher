@@ -1,8 +1,7 @@
 """
-Stage 4a: LLM Dynamic Refinement Factor (Phi_LLM)
-Evaluates Technical Substance (S), Industry Impact (I), and Lifecycle Phase (L):
-    Phi_LLM = (0.4 * S + 0.6 * I) * L
-    Final Score(i) = M_i * Phi_LLM
+Stage 4a: "Executive Editor" LLM Evaluator (Phi_editorial)
+Evaluates Narrative Tension (T), Counter-Intuitive Factor (C), and Visual/Exploratory Depth (E):
+    Phi_editorial = (0.35 * T + 0.40 * C + 0.25 * E) * Hook_Multiplier (1.0 to 1.5)
 """
 
 from __future__ import annotations
@@ -18,48 +17,72 @@ from src.models import NormalizedCandidate
 
 log = logging.getLogger(__name__)
 
-LIFECYCLE_MULTIPLIERS = {
-    "emerging": 1.30,
-    "peak_viral": 0.80,
-    "trailing": 0.50,
-}
 
-
-def evaluate_with_llm(cand: NormalizedCandidate, provider: str = "none") -> None:
+def evaluate_as_executive_editor(cand: NormalizedCandidate, provider: str = "none") -> None:
     if provider == "none":
-        s = min(1.0, 0.45 + 0.12 * len(cand.verified_entities) + 0.20 * cand.source_authority_ws)
-        i = min(1.5, 0.55 + 0.15 * cand.dispersion_k + 0.10 * len(cand.verified_entities))
-        phase = "emerging" if cand.dispersion_k <= 2 else "peak_viral"
-        l_mult = 1.20 if phase == "emerging" else 0.85
-        phi = (0.4 * s + 0.6 * i) * l_mult
-        cand.llm_audit = {
-            "technical_substance": round(s, 2),
-            "industry_impact": round(i, 2),
-            "lifecycle_phase": phase,
-            "lifecycle_multiplier": l_mult,
-            "contrarian_flag": False,
-            "rationale": f"Deterministic audit across {cand.dispersion_k} platform(s) with entities {', '.join(cand.verified_entities) or cand.vertical}.",
-            "critical_implication": f"Impacts {cand.vertical} supply-chain and technical roadmap execution.",
+        t = min(1.0, 0.45 + 0.15 * (cand.dispersion_k - 1) + (0.20 if cand.comments_count >= 50 else 0.05))
+        c = min(1.0, 0.40 + 0.50 * cand.information_asymmetry_ia)
+        e = min(1.0, 0.45 + 0.12 * len(cand.verified_entities))
+        hook_mult = 1.35 if cand.information_asymmetry_ia >= 0.55 else 1.15
+        phi = (0.35 * t + 0.40 * c + 0.25 * e) * hook_mult
+        raw_score = cand.m_viral * phi
+        ed_score = round(min(99.5, max(25.0, raw_score * 38.0)), 2)
+
+        verdict = "PUBLISH_IMMEDIATELY" if ed_score >= 70.0 else ("MONITOR" if ed_score >= 50.0 else "DISCARD")
+        entities_str = ", ".join(cand.verified_entities[:3]) or cand.vertical
+        cand.phi_editorial = round(phi, 3)
+        cand.editorial_score = ed_score
+        cand.editorial_eval = {
+            "editorial_score": ed_score,
+            "story_angles": [
+                {"type": "Contrarian / Debunk", "hook": f"Everyone is focused on headline specs, but {cand.title} exposes the real constraint in {entities_str}."},
+                {"type": "David vs. Goliath", "hook": f"How {entities_str} supply-chain bottlenecks shift leverage across the {cand.vertical} stack."},
+                {"type": "Under-the-Hood Teardown", "hook": f"The physical and unit-economic mechanics behind {cand.title}."},
+            ],
+            "anchor_visual": f"Unit-economics & bottleneck schematic comparing {entities_str} throughput vs. yield/cost limits.",
+            "key_villain_or_bottleneck": f"{entities_str} engineering & supply-chain constraint",
+            "editorial_verdict": verdict,
+            "narrative_framework": {
+                "the_hook": f"Public commentary around {cand.title} misses the underlying {cand.vertical} bottleneck.",
+                "the_misconception": f"Mainstream coverage treats {entities_str} scaling as purely a demand or headline-node story.",
+                "the_engineering_truth": f"Primary signals ({cand.source_name}) point to physical yield, packaging, or architecture constraints.",
+                "the_conflict": f"Incumbent roadmap assumptions vs. real-world {entities_str} execution limits.",
+            },
         }
-        cand.llm_multiplier_phi = round(phi, 3)
-        cand.final_score = round(cand.base_score_mi * phi, 2)
         return
 
     prompt = (
-        "Evaluate this tech/semiconductor candidate in strict JSON.\n"
-        f"Title: {cand.title}\n"
-        f"Source: {cand.source_name} ({cand.source_platform})\n"
-        f"Vertical: {cand.vertical}\n"
-        f"Entities: {cand.verified_entities}\n"
-        f"Summary: {cand.body[:500]}\n\n"
-        "Return JSON with exact keys:\n"
-        '  "technical_substance": float in [0.2, 1.0],\n'
-        '  "industry_impact": float in [0.3, 1.5],\n'
-        '  "lifecycle_phase": "emerging" | "peak_viral" | "trailing",\n'
-        '  "lifecycle_multiplier": float (1.3 for emerging, 0.8 for peak_viral, 0.5 for trailing),\n'
-        '  "contrarian_flag": bool,\n'
-        '  "rationale": 1-2 sentence technical/supply-chain summary,\n'
-        '  "critical_implication": 1 sentence on downstream value-chain impact.'
+        "You are the Executive Editor of a premier deep-tech publication (in the vein of SemiAnalysis and Stratechery).\n"
+        "Evaluate the following trend candidate for its editorial value:\n\n"
+        "TREND PAYLOAD:\n"
+        f"- Cluster Title: {cand.title}\n"
+        f"- Source: {cand.source_name} ({cand.editorial_layer})\n"
+        f"- Summary: {cand.body[:600]}\n"
+        f"- Extracted Entities: {cand.verified_entities}\n\n"
+        "Evaluate across three editorial criteria (0.0 to 1.0):\n"
+        "1. Narrative Tension (T): Active conflict, rivalry, or corporate blunder.\n"
+        "2. Counter-Intuitive Factor (C): Debunks a common assumption or reveals an unexpected bottleneck.\n"
+        "3. Visual/Exploratory Depth (E): Can be anchored by a concrete schematic, unit-economic chart, or flow diagram.\n"
+        "Calculate Phi_editorial = (0.35 * T + 0.40 * C + 0.25 * E) * Hook_Multiplier (1.0 to 1.5).\n\n"
+        "OUTPUT FORMAT (JSON ONLY):\n"
+        "{\n"
+        '  "editorial_score": float (0-100),\n'
+        '  "phi_editorial": float,\n'
+        '  "story_angles": [\n'
+        '    {"type": "Contrarian / Debunk", "hook": "string"},\n'
+        '    {"type": "David vs. Goliath", "hook": "string"},\n'
+        '    {"type": "Under-the-Hood Teardown", "hook": "string"}\n'
+        "  ],\n"
+        '  "anchor_visual": "Description of the essential chart or architectural diagram needed",\n'
+        '  "key_villain_or_bottleneck": "string",\n'
+        '  "editorial_verdict": "PUBLISH_IMMEDIATELY" | "MONITOR" | "DISCARD",\n'
+        '  "narrative_framework": {\n'
+        '    "the_hook": "string",\n'
+        '    "the_misconception": "string",\n'
+        '    "the_engineering_truth": "string",\n'
+        '    "the_conflict": "string"\n'
+        "  }\n"
+        "}"
     )
 
     try:
@@ -94,18 +117,14 @@ def evaluate_with_llm(cand: NormalizedCandidate, provider: str = "none") -> None
             resp.raise_for_status()
             data = json.loads(resp.json()["candidates"][0]["content"]["parts"][0]["text"])
         else:
-            evaluate_with_llm(cand, "none")
+            evaluate_as_executive_editor(cand, "none")
             return
 
-        s = max(0.2, min(1.0, float(data.get("technical_substance", 0.6))))
-        i = max(0.3, min(1.5, float(data.get("industry_impact", 0.8))))
-        phase = str(data.get("lifecycle_phase", "emerging"))
-        l_mult = max(0.5, min(1.3, float(data.get("lifecycle_multiplier", LIFECYCLE_MULTIPLIERS.get(phase, 1.0)))))
-        phi = (0.4 * s + 0.6 * i) * l_mult
-
-        cand.llm_audit = data
-        cand.llm_multiplier_phi = round(phi, 3)
-        cand.final_score = round(cand.base_score_mi * phi, 2)
+        phi = float(data.get("phi_editorial", 1.15))
+        ed_score = float(data.get("editorial_score", min(99.5, cand.m_viral * phi * 38.0)))
+        cand.phi_editorial = round(phi, 3)
+        cand.editorial_score = round(max(0.0, min(100.0, ed_score)), 2)
+        cand.editorial_eval = data
     except Exception as exc:
-        log.warning("LLM audit fallback for %s: %s", cand.event_id, exc)
-        evaluate_with_llm(cand, "none")
+        log.warning("Executive Editor LLM fallback for %s: %s", cand.event_id, exc)
+        evaluate_as_executive_editor(cand, "none")

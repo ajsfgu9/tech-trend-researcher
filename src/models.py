@@ -4,14 +4,25 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-SOURCE_AUTHORITY_WEIGHTS: dict[str, float] = {
-    "technical_news": 0.95,      # SemiAnalysis, SemiEngineering, TrendForce, DigiTimes, FierceBiotech
-    "hacker_news": 0.90,         # Firebase / Algolia API
-    "reddit": 0.85,              # r/semiconductors, r/hardware, r/localllama
-    "github": 0.85,              # GitHub Trending & Releases
-    "arxiv": 0.80,               # arXiv cs.AR, physics.app-ph, cs.RO, quant-ph, bioRxiv
-    "x_twitter": 0.70,           # Curated Tech/Semicon Lists
-    "general_social": 0.40,      # Bluesky, Threads, YouTube Tech
+# Re-Weighted Sources for Editorial Value (W_e)
+EDITORIAL_SOURCE_WEIGHTS: dict[str, float] = {
+    "primary_engineering": 0.95,     # GitHub Issues/Discussions, arXiv, bioRxiv, USPTO patents
+    "debate_controversy": 0.90,      # Hacker News, Reddit (r/hardware, r/semiconductors, etc.)
+    "financial_supply_chain": 0.85,  # Earnings transcripts, SEC, DigiTimes, TrendForce, SemiAnalysis
+    "viral_amplification": 0.75,     # X/Twitter tech lists, Bluesky, Mastodon
+    "mainstream_tech_media": 0.40,   # The Verge, TechCrunch, Tom's Hardware, Ars Technica
+}
+
+# Map ingestion platform IDs -> Editorial Source Layer
+PLATFORM_TO_EDITORIAL_LAYER: dict[str, str] = {
+    "arxiv": "primary_engineering",
+    "github": "primary_engineering",
+    "hacker_news": "debate_controversy",
+    "reddit": "debate_controversy",
+    "technical_news": "financial_supply_chain",
+    "x_twitter": "viral_amplification",
+    "general_social": "viral_amplification",
+    "mainstream_media": "mainstream_tech_media",
 }
 
 
@@ -30,19 +41,22 @@ class NormalizedCandidate:
     event_id: str
     source_platform: str
     source_name: str
+    editorial_layer: str
     url: str
     title: str
     body: str
     published_at_utc: str
     engagement_value: float
-    source_authority_ws: float
+    comments_count: float
+    source_weight_we: float
     vertical: str = "semiconductor"
     relevance_ri: float = 0.0
+    information_asymmetry_ia: float = 0.0
     verified_entities: list[str] = field(default_factory=list)
     velocity_vi: float = 0.0
     dispersion_di: float = 1.0
     dispersion_k: int = 1
-    base_score_mi: float = 0.0
-    llm_audit: dict[str, Any] = field(default_factory=dict)
-    llm_multiplier_phi: float = 1.0
-    final_score: float = 0.0
+    m_viral: float = 0.0
+    editorial_eval: dict[str, Any] = field(default_factory=dict)
+    phi_editorial: float = 1.0
+    editorial_score: float = 0.0

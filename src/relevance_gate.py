@@ -1,8 +1,9 @@
 """
-Stage 2: Staging Area & Two-Tier Tech/Semiconductor Relevance Gate
+Stage 2: Staging Area, Relevance Gate & Information Asymmetry Index (IA)
 
-Tier 1: Fast Lexical Whitelist + Dense Vector Cosine Similarity (Sim >= 0.62 threshold).
-Tier 2: Named Entity Recognition (NER) & Generic Consumer Noise Filter.
+- Normalizes platform engagement with comments weighted 3x higher than likes.
+- Computes Information Asymmetry (IA): specialized technical token density
+  paired with cross-platform tension / public confusion signals.
 """
 
 from __future__ import annotations
@@ -11,25 +12,32 @@ import math
 import re
 from collections import Counter
 
-from src.models import NormalizedCandidate, RawEvent, SOURCE_AUTHORITY_WEIGHTS
+from src.models import (
+    EDITORIAL_SOURCE_WEIGHTS,
+    NormalizedCandidate,
+    PLATFORM_TO_EDITORIAL_LAYER,
+    RawEvent,
+)
 
 TIER1_WHITELIST = (
-    "euv", "asml", "tsmc", "nvidia", "cowos", "hbm3e", "hbm4", "backside power delivery",
-    "gaafet", "high-na", "substrate", "abf", "eda", "synopsys", "foundry", "packaging",
-    "interconnect", "cxl", "pcie 6.0", "nvlink", "silicon photonics", "cpo", "glass core",
-    "wafer", "lithography", "crispr", "phase 1", "phase 2", "phase 3", "humanoid", "actuator",
-    "qubit", "surface code", "error correction", "capex", "s-1", "8-k", "series ",
+    "euv", "asml", "tsmc", "tsmc a16", "nvidia", "cowos", "hbm3e", "hbm4",
+    "backside power delivery", "gaafet", "high-na", "hybrid bonding", "thermal throttling",
+    "substrate", "abf", "eda", "synopsys", "foundry", "packaging", "interconnect",
+    "cxl", "pcie 6.0", "nvlink", "silicon photonics", "cpo", "glass core",
+    "wafer", "lithography", "yield", "warpage", "interposer", "reticle",
+    "crispr", "phase 1", "phase 2", "phase 3", "humanoid", "actuator",
+    "qubit", "surface code", "error correction", "capex", "s-1", "8-k",
 )
 
 DOMAIN_ANCHOR_CORPUS: dict[str, str] = {
     "semiconductor": (
-        "semiconductor wafer fab lithography euv high-na asml tsmc intel foundry "
-        "cowos packaging hbm3e hbm4 backside power delivery gaafet abf glass core substrate "
-        "eda synopsys cadence interconnect cxl pcie nvlink silicon photonics cpo"
+        "semiconductor wafer fab lithography euv high-na asml tsmc a16 intel foundry "
+        "cowos packaging hybrid bonding hbm3e hbm4 backside power delivery gaafet abf glass core "
+        "substrate interposer warpage eda synopsys interconnect cxl pcie nvlink silicon photonics cpo"
     ),
     "financing": (
-        "semiconductor capex fab equipment spending venture funding series s-1 ipo "
-        "8-k sec filing datacenter gpu cluster debt financing valuation acquisition"
+        "semiconductor capex fab equipment margin erosion yield rates lead times venture funding "
+        "series s-1 ipo 8-k sec filing datacenter gpu cluster debt financing valuation"
     ),
     "biomedical": (
         "crispr gene editing mrna protein folding alphafold clinical trial phase 1 phase 2 "
@@ -50,7 +58,7 @@ TRACKED_ENTITIES = (
     "Samsung", "Applied Materials", "Tokyo Electron", "Lam Research", "Synopsys",
     "Cadence", "Ibiden", "SEMCO", "Astera Labs", "Broadcom", "Marvell", "ARM",
     "EXE:5000", "TSMC A16", "PCIe 6.0", "CXL 3.1", "CXL", "NVLink", "HBM3e", "HBM4",
-    "CoWoS", "High-NA EUV", "Glass Core",
+    "CoWoS", "High-NA EUV", "Glass Core", "Hybrid Bonding",
 )
 
 CONSUMER_NOISE_PATTERNS = re.compile(
@@ -59,9 +67,14 @@ CONSUMER_NOISE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+CONTROVERSY_TOKENS = re.compile(
+    r"\b(wrong|myth|misconception|actually|bottleneck|scrap|yield|overhyped|quietly|"
+    r"capping|squeeze|margin|vs\.?|versus|flaw|throttling|warpage|delay|shortage)\b",
+    re.IGNORECASE,
+)
+
 
 def _cosine_text_sim(text_a: str, text_b: str) -> float:
-    """Lightweight character 3-gram + token vector cosine similarity (zero heavy deps fallback)."""
     def vec(t: str) -> Counter[str]:
         low = t.lower()
         tokens = re.findall(r"[a-z0-9\-\.]{2,}", low)
@@ -85,31 +98,46 @@ def normalize_raw_event(ev: RawEvent) -> NormalizedCandidate:
     url = str(p.get("url") or "").strip()
 
     if ev.source_platform == "hacker_news":
-        eng = float(p.get("points") or 0) + 1.5 * float(p.get("num_comments") or 0)
+        likes = float(p.get("points") or 0)
+        comments = float(p.get("num_comments") or 0)
+        eng = likes + 3.0 * comments
     elif ev.source_platform == "reddit":
-        eng = float(p.get("score") or p.get("ups") or 0) + 2.0 * float(p.get("num_comments") or 0)
+        likes = float(p.get("score") or p.get("ups") or 0)
+        comments = float(p.get("num_comments") or 0)
+        eng = likes + 3.0 * comments
     elif ev.source_platform == "x_twitter":
-        eng = float(p.get("impressions") or 0) * 0.01 + float(p.get("replies") or 0) * 5.0
+        likes = float(p.get("likes") or 0)
+        comments = float(p.get("replies") or 0)
+        shares = float(p.get("retweets") or 0)
+        eng = likes + 3.0 * comments + 2.0 * shares
     elif ev.source_platform == "github":
-        eng = float(p.get("stargazers_count") or 0)
+        likes = float(p.get("stargazers_count") or 0)
+        comments = float(p.get("open_issues_count") or 0)
+        eng = likes + 3.0 * comments
     else:
+        comments = 0.0
         eng = 10.0
+
+    layer = PLATFORM_TO_EDITORIAL_LAYER.get(ev.source_platform, "financial_supply_chain")
+    if any(m in ev.source_name.lower() for m in ("verge", "techcrunch", "tom's hardware", "ars technica")):
+        layer = "mainstream_tech_media"
 
     return NormalizedCandidate(
         event_id=ev.event_id,
         source_platform=ev.source_platform,
         source_name=ev.source_name,
+        editorial_layer=layer,
         url=url,
         title=title,
         body=body,
         published_at_utc=ev.published_at_utc,
         engagement_value=eng,
-        source_authority_ws=SOURCE_AUTHORITY_WEIGHTS.get(ev.source_platform, 0.50),
+        comments_count=comments,
+        source_weight_we=EDITORIAL_SOURCE_WEIGHTS.get(layer, 0.75),
     )
 
 
 def run_relevance_gate(candidates: list[NormalizedCandidate], sim_threshold: float = 0.62) -> list[NormalizedCandidate]:
-    """Execute Tier 1 (Whitelist + Dense Similarity >= 0.62) and Tier 2 (NER + Consumer Filter)."""
     passed: list[NormalizedCandidate] = []
     for cand in candidates:
         full_text = f"{cand.title} {cand.body}".strip()
@@ -135,8 +163,12 @@ def run_relevance_gate(candidates: list[NormalizedCandidate], sim_threshold: flo
         if CONSUMER_NOISE_PATTERNS.search(lowered) and not entities:
             continue
 
+        controversy_hits = len(set(CONTROVERSY_TOKENS.findall(lowered)))
+        ia_score = min(1.0, 0.25 + 0.12 * min(whitelist_hits, 4) + 0.10 * min(controversy_hits, 3))
+
         cand.vertical = best_vertical
         cand.relevance_ri = round(best_sim, 4)
+        cand.information_asymmetry_ia = round(ia_score, 4)
         cand.verified_entities = entities
         passed.append(cand)
 

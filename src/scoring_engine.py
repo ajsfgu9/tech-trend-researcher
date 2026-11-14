@@ -1,8 +1,9 @@
 """
-Stage 3: Deterministic Transformation
-Calculates Velocity z-score (V_i), Cross-Platform Dispersion (D_i),
-and Algorithmic Composite Metric:
-    M_i = W_s * R_i * (1 + ln(1 + V_i)) * D_i
+Stage 3: Editorial Scoring Engine (M_viral + Information Asymmetry)
+Calculates:
+- V: 4-hour comment/share velocity z-score (comments weighted 3x likes)
+- D: Cross-platform spread multiplier (1.0 + 0.35 * (K - 1))
+- M_viral = W_e * R_i * (1 + ln(1 + V)) * D * (1 + 0.5 * IA)
 """
 
 from __future__ import annotations
@@ -20,10 +21,10 @@ STOPWORDS = {
 
 
 def _tokens(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9\-\.]{3,}", text.lower()) if w not in STOPWORDS}
+    return {w.rstrip("s") for w in re.findall(r"[a-z0-9\-\.]{3,}", text.lower()) if w not in STOPWORDS}
 
 
-def compute_deterministic_scores(
+def compute_editorial_base_scores(
     candidates: list[NormalizedCandidate],
     metadata_repo: MetadataRepository,
 ) -> list[NormalizedCandidate]:
@@ -46,17 +47,17 @@ def compute_deterministic_scores(
                 continue
             tok_j = cand_tokens[j]
             union = tok_i | tok_j
-            if union and (len(tok_i & tok_j) / len(union)) >= 0.25:
+            if union and (len(tok_i & tok_j) / len(union)) >= 0.16:
                 platforms_seen.add(other.source_platform)
 
         k = min(5, len(platforms_seen))
         di = 1.0 + 0.35 * (k - 1)
-        mi = c.source_authority_ws * c.relevance_ri * (1.0 + math.log1p(vi)) * di
+        m_viral = c.source_weight_we * c.relevance_ri * (1.0 + math.log1p(vi)) * di * (1.0 + 0.5 * c.information_asymmetry_ia)
 
         c.velocity_vi = round(vi, 3)
         c.dispersion_k = k
         c.dispersion_di = round(di, 3)
-        c.base_score_mi = round(mi, 3)
+        c.m_viral = round(m_viral, 3)
         metadata_repo.record_entity_links(c.verified_entities)
 
     return candidates

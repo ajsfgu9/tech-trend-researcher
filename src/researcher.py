@@ -1,5 +1,5 @@
 """
-Main Four-Stage Tech & Semiconductor Trend Discovery Pipeline
+Main Editorial Tech & Semiconductor Trend Researcher Pipeline
 """
 
 from __future__ import annotations
@@ -11,12 +11,12 @@ import os
 
 from dotenv import load_dotenv
 
-from src.clustering import cluster_and_format
-from src.llm_auditor import evaluate_with_llm
+from src.clustering import cluster_and_format_briefs
+from src.llm_auditor import evaluate_as_executive_editor
 from src.metadata_repo import MetadataRepository
 from src.raw_layer import ImmutableRawLayer
 from src.relevance_gate import normalize_raw_event, run_relevance_gate
-from src.scoring_engine import compute_deterministic_scores
+from src.scoring_engine import compute_editorial_base_scores
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("tech-trend-researcher")
@@ -44,31 +44,31 @@ def run_pipeline(
 
     normalized = [normalize_raw_event(ev) for ev in raw_events]
     gated = run_relevance_gate(normalized, sim_threshold=0.62)
-    log.info("Stage 2 (Relevance Gate): %d/%d candidates passed Sim >= 0.62 & NER.", len(gated), len(normalized))
+    log.info("Stage 2 (Relevance Gate & IA): %d/%d candidates passed.", len(gated), len(normalized))
 
-    scored = compute_deterministic_scores(gated, metadata_repo)
-    above_tau = [c for c in scored if c.base_score_mi >= ingestion_threshold_tau]
-    log.info("Stage 3 (Deterministic Scoring): %d candidates above tau=%.2f.", len(above_tau), ingestion_threshold_tau)
+    scored = compute_editorial_base_scores(gated, metadata_repo)
+    above_tau = [c for c in scored if c.m_viral >= ingestion_threshold_tau]
+    log.info("Stage 3 (Editorial Base Scoring): %d candidates above tau=%.2f.", len(above_tau), ingestion_threshold_tau)
 
     for cand in above_tau:
-        evaluate_with_llm(cand, provider=llm_provider)
+        evaluate_as_executive_editor(cand, provider=llm_provider)
 
-    clusters, dashboard_md = cluster_and_format(above_tau, top_n=top_n)
+    briefs, dashboard_md = cluster_and_format_briefs(above_tau, top_n=top_n)
 
     os.makedirs(os.path.dirname(os.path.abspath(output_json_path)), exist_ok=True)
     with open(output_json_path, "w", encoding="utf-8") as f:
-        json.dump(clusters, f, indent=2, ensure_ascii=False)
+        json.dump(briefs, f, indent=2, ensure_ascii=False)
 
     with open(dashboard_md_path, "w", encoding="utf-8") as f:
         f.write(dashboard_md + "\n")
 
-    log.info("Stage 4 (Presentation): exported %d trend clusters to %s and %s.", len(clusters), output_json_path, dashboard_md_path)
-    return clusters, dashboard_md
+    log.info("Stage 4 (Content Briefs): exported %d editorial briefs to %s and %s.", len(briefs), output_json_path, dashboard_md_path)
+    return briefs, dashboard_md
 
 
 def main() -> None:
     load_dotenv()
-    parser = argparse.ArgumentParser(description="Four-Stage Tech & Semiconductor Trend Researcher")
+    parser = argparse.ArgumentParser(description="Editorial Tech & Semiconductor Trend Researcher")
     parser.add_argument("--hours", type=int, default=int(os.getenv("LOOKBACK_HOURS", "72")))
     parser.add_argument("--top", type=int, default=int(os.getenv("TOP_N_TRENDS", "12")))
     parser.add_argument("--tau", type=float, default=float(os.getenv("INGESTION_THRESHOLD_TAU", "0.45")))
@@ -82,7 +82,7 @@ def main() -> None:
         aggregator_db_path=os.getenv("AI_HARDWARE_DB_PATH", "/data/ai_hardware_bot/agi_hardware_trends.db"),
         raw_db_path=os.getenv("RAW_DB_PATH", "./data/raw_events.db"),
         metadata_db_path=os.getenv("METADATA_DB_PATH", "./data/metadata_repo.db"),
-        output_json_path=os.getenv("OUTPUT_JSON_PATH", "./data/trends_output.json"),
+        output_json_path=os.getenv("OUTPUT_JSON_PATH", "./data/content_briefs.json"),
         dashboard_md_path=os.getenv("DASHBOARD_MD_PATH", "./data/dashboard.md"),
         lookback_hours=args.hours,
         top_n=args.top,

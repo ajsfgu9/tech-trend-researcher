@@ -26,8 +26,8 @@ def _create_mock_aggregator_db(db_path: str) -> None:
     )
     now = datetime.now(timezone.utc).isoformat()
     rows = [
-        ("https://semianalysis.com/high-na-euv-exe5000", "fp1", "High-NA EUV EXE:5000 Insertion Acceleration at TSMC A16 and Intel Foundry", "SemiAnalysis", "rss", now, "semiconductor"),
-        ("https://news.ycombinator.com/item?id=101", "fp2", "ASML High-NA EUV EXE:5000 Pilot Wafer Yield and TSMC A16 Mask Reduction", "Hacker News", "api", now, "semiconductor"),
+        ("https://semianalysis.com/cowos-squeeze", "fp1", "The CoWoS Squeeze: Why Advanced Packaging Yields Are Quietly Capping AI Margins", "SemiAnalysis", "rss", now, "semiconductor"),
+        ("https://news.ycombinator.com/item?id=101", "fp2", "CoWoS Interposer Warpage and TSMC Packaging Yield Bottlenecks", "Hacker News", "api", now, "semiconductor"),
         ("https://www.sec.gov/Archives/edgar/8k.htm", "fp3", "AI Datacenter Capex S-1 Filing for HBM4 & CoWoS GPU Cluster Financing", "SEC EDGAR", "sec", now, "financing"),
         ("https://www.biorxiv.org/content/crispr", "fp4", "CRISPR Prime Editing Phase 2 Trial Reaches 94% Fidelity in Genomics", "bioRxiv", "biorxiv", now, "biomedical"),
         ("https://arxiv.org/abs/2611.0002", "fp5", "Humanoid Robot Tactile Actuator with VLA Control", "arXiv cs.RO", "arxiv", now, "robotics"),
@@ -42,16 +42,16 @@ def _create_mock_aggregator_db(db_path: str) -> None:
     conn.close()
 
 
-def test_four_stage_pipeline(tmp_path) -> None:
+def test_editorial_content_brief_pipeline(tmp_path) -> None:
     agg_db = str(tmp_path / "agi_hardware_trends.db")
     raw_db = str(tmp_path / "raw_events.db")
     meta_db = str(tmp_path / "metadata_repo.db")
-    out_json = str(tmp_path / "trends_output.json")
+    out_json = str(tmp_path / "content_briefs.json")
     dash_md = str(tmp_path / "dashboard.md")
 
     _create_mock_aggregator_db(agg_db)
 
-    clusters, md = run_pipeline(
+    briefs, md = run_pipeline(
         aggregator_db_path=agg_db,
         raw_db_path=raw_db,
         metadata_db_path=meta_db,
@@ -64,16 +64,17 @@ def test_four_stage_pipeline(tmp_path) -> None:
         offline_db_only=True,
     )
 
-    topics = " ".join(c["topic"] for c in clusters)
-    assert "iPhone" not in topics
-    assert len(clusters) >= 4
+    headlines = " ".join(b["headline_recommendation"] for b in briefs)
+    assert "iPhone" not in headlines
+    assert len(briefs) >= 4
 
-    euv = next(c for c in clusters if "High-NA EUV" in c["topic"])
-    assert euv["metrics"]["cross_platform_dispersion_count"] >= 2
-    assert "ASML" in euv["verified_entities"]
-    assert "llm_synthesis" in euv
+    cowos = next(b for b in briefs if "CoWoS" in b["headline_recommendation"])
+    assert cowos["editorial_id"].startswith("brief_")
+    assert "narrative_framework" in cowos
+    assert "recommended_formats" in cowos
+    assert cowos["virality_metrics"]["cross_platform_dispersion"] >= 2
 
     with open(out_json, "r", encoding="utf-8") as f:
         loaded = json.load(f)
     assert isinstance(loaded, list)
-    assert "| Rank | Trend Cluster |" in md
+    assert "| Rank | Editorial Score | Action Required |" in md

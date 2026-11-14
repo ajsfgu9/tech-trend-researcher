@@ -1,13 +1,23 @@
-# Tech Trend Researcher (4-Stage Streaming Architecture)
+# Tech Trend Researcher (Editorial Viability & Automated Content Briefs)
 
-A four-stage semiconductor and deep-tech trend discovery pipeline paired with [`jijiji88888/ai-hardware-bot`](https://github.com/jijiji88888/ai-hardware-bot), modeling virality strictly as a **velocity trigger** ($V_i$) filtered through a deterministic relevance gate and dynamic LLM scoring engine ($\Phi_{\text{LLM}}$).
+An editorial-grade tech & semiconductor trend discovery pipeline paired with [`jijiji88888/ai-hardware-bot`](https://github.com/jijiji88888/ai-hardware-bot). Instead of chasing raw social virality, it filters for **editorial viability**, **information asymmetry**, and **narrative tension** to produce ready-to-draft **Automated Content Briefs** (`content_briefs.json`) and an **Editorial Decision Matrix** (`dashboard.md`).
 
-## Architecture
+## Editorial Architecture
 
-1. **Stage 1 — Immutable Raw Layer (`src/raw_layer.py`)**: Ingests from `ai-hardware-bot` (`agi_hardware_trends.db` in read-only WAL mode), HN Algolia, Reddit (`r/semiconductors`, `r/hardware`, `r/LocalLLaMA`, `r/biotech`, `r/robotics`, `r/QuantumComputing`), Technical RSS, and arXiv, persisting untouched JSON payloads.
-2. **Stage 2 — Staging & Two-Tier Relevance Gate (`src/relevance_gate.py`)**: Executes Tier 1 lexical whitelist + cosine similarity ($\text{Sim} \ge 0.62$) and Tier 2 NER + consumer-noise filtering.
-3. **Stage 3 — Deterministic Transformation (`src/scoring_engine.py`)**: Computes $M_i = W_s \times R_i \times (1 + \ln(1 + V_i)) \times D_i$ using rolling baselines from the SQLite **Metadata Repository (`src/metadata_repo.py`)**.
-4. **Stage 4 — Semantic Presentation Layer (`src/llm_auditor.py`, `src/clustering.py`)**: Evaluates Technical Substance ($S$), Industry Impact ($I$), and Lifecycle Phase ($L$) via $\Phi_{\text{LLM}} = (0.4S + 0.6I) \times L$, clusters related events, and outputs the structured JSON briefing (`trends_output.json`) and Markdown dashboard (`dashboard.md`).
+1. **Editorial Source Re-Weighting (`W_e` in `src/models.py`)**:
+   - `primary_engineering` (GitHub, arXiv, bioRxiv, patents): `0.95`
+   - `debate_controversy` (Hacker News, Reddit `r/hardware`, `r/semiconductors`): `0.90`
+   - `financial_supply_chain` (SEC EDGAR, DigiTimes, TrendForce, SemiAnalysis): `0.85`
+   - `viral_amplification` (X/Twitter tech lists, Bluesky, Mastodon): `0.75`
+   - `mainstream_tech_media` (The Verge, TechCrunch, Tom's Hardware, Ars Technica): `0.40`
+2. **Viral Momentum & Information Asymmetry (`src/relevance_gate.py`, `src/scoring_engine.py`)**:
+   - Comments weighted **3x higher than likes** to capture active technical debate.
+   - Computes Information Asymmetry (`IA`) from specialized hardware/deep-tech token density and cross-platform controversy signals.
+3. **Executive Editor LLM Evaluator (`src/llm_auditor.py`)**:
+   - Scores Narrative Tension (`T`), Counter-Intuitive Factor (`C`), and Visual/Exploratory Depth (`E`):
+     `Phi_editorial = (0.35 * T + 0.40 * C + 0.25 * E) * Hook_Multiplier`
+4. **Automated Content Briefs & Decision Matrix (`src/clustering.py`)**:
+   - Outputs `content_briefs.json` (headline recommendation, `narrative_framework`, `story_angles`, `anchor_visual`, `content_structure`, `recommended_formats`) and `dashboard.md` mapped to the 4-tier Editorial Decision Matrix (`85-100` Lead Story, `70-84` Fast-Turnaround Thread, `50-69` Newsletter Segment, `<50` Archive).
 
 ## Quickstart
 
