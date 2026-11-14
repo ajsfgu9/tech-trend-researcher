@@ -1,36 +1,18 @@
-# Tech Trend Researcher
+# Tech Trend Researcher (4-Stage Streaming Architecture)
 
-A multi-vertical tech trend research engine built to pair with [`jijiji88888/ai-hardware-bot`](https://github.com/jijiji88888/ai-hardware-bot). It discovers, verifies, and ranks emerging tech trends across **semiconductors**, **financing**, **biomedical**, **robotics**, and **quantum**, then scores each trend against reverse-engineered **X (Twitter) For You** ranking mechanics so a downstream **News Writer** can craft high-signal posts.
+A four-stage semiconductor and deep-tech trend discovery pipeline paired with [`jijiji88888/ai-hardware-bot`](https://github.com/jijiji88888/ai-hardware-bot), modeling virality strictly as a **velocity trigger** ($V_i$) filtered through a deterministic relevance gate and dynamic LLM scoring engine ($\Phi_{\text{LLM}}$).
 
 ## Architecture
 
-1. **Aggregator Bridge (`src/sources.py`)**:
-   - Safely reads `ai-hardware-bot`'s SQLite database (`agi_hardware_trends.db`) in read-only URI mode (`?mode=ro`) with WAL support, excluding noisy feeds (`Hacker News` by default).
-   - Supplements with live primary & specialist RSS/Atom feeds across all 5 tech verticals (`arXiv`, `bioRxiv`, `SEC EDGAR`, `TrendForce`, `Semiconductor Engineering`, `FierceBiotech`, `IEEE Spectrum Robotics`, `Quantum Computing Report`).
-2. **Fairness & Anti-Hype Engine (`src/fairness_engine.py`)**:
-   - Clusters related stories across sources, extracts hard quantitative metrics (`nm`, `TFLOPS`, `pJ/bit`, `$B`, `Phase 1/2/3`, `qubits`, `DOF`, etc.), rewards primary-source corroboration, penalizes single-blog rumors with zero metrics, and enforces cross-vertical diversity quotas.
-3. **Reverse-Engineered X/Twitter Algorithm Scorer (`src/x_algo_scorer.py`)**:
-   - Models the open-sourced [`xai-org/x-algorithm`](https://github.com/xai-org/x-algorithm) Phoenix Transformer & `home-mixer/params/param.rs` action weights:
-     - **High-effort explicit signals (~96.9% of positive weight mass)**: `share_via_copy_link` (+20.0), `reply` (+5.0), `quote` (+5.0), `share_via_dm` (+5.0), `follow_author` (+4.0), `share` (+2.0), `retweet` (+1.0).
-     - **Attention & passive signals**: `favorite` (+0.66), `click` (+0.30), `open_link` (+0.20), `cont_click_dwell_time` (+0.40), `cont_dwell_time` (+0.006/s).
-     - **Negative & suppression signals**: `not_interested` (-52.272), Grox spam classification, and indirect external-link suppression (`url_click_score` omitted from Phoenix's 19-action head; `has_visible_link` feature).
-   - Outputs an **X Attractiveness Score (0–100)** plus concrete posting directives (`recommended_format`, `link_placement: first_reply_only`, `visual_suggestion` for Phoenix v5 multimodal embeddings, and 30–60 min author reply-velocity rules).
-4. **Handoff to News Writer (`src/researcher.py`)**:
-   - Persists ranked trends to `tech_trends.db` (SQLite WAL mode) and exports `trends_output.json` with source URLs, fairness caveats, and X posting hooks.
+1. **Stage 1 — Immutable Raw Layer (`src/raw_layer.py`)**: Ingests from `ai-hardware-bot` (`agi_hardware_trends.db` in read-only WAL mode), HN Algolia, Reddit (`r/semiconductors`, `r/hardware`, `r/LocalLLaMA`, `r/biotech`, `r/robotics`, `r/QuantumComputing`), Technical RSS, and arXiv, persisting untouched JSON payloads.
+2. **Stage 2 — Staging & Two-Tier Relevance Gate (`src/relevance_gate.py`)**: Executes Tier 1 lexical whitelist + cosine similarity ($\text{Sim} \ge 0.62$) and Tier 2 NER + consumer-noise filtering.
+3. **Stage 3 — Deterministic Transformation (`src/scoring_engine.py`)**: Computes $M_i = W_s \times R_i \times (1 + \ln(1 + V_i)) \times D_i$ using rolling baselines from the SQLite **Metadata Repository (`src/metadata_repo.py`)**.
+4. **Stage 4 — Semantic Presentation Layer (`src/llm_auditor.py`, `src/clustering.py`)**: Evaluates Technical Substance ($S$), Industry Impact ($I$), and Lifecycle Phase ($L$) via $\Phi_{\text{LLM}} = (0.4S + 0.6I) \times L$, clusters related events, and outputs the structured JSON briefing (`trends_output.json`) and Markdown dashboard (`dashboard.md`).
 
 ## Quickstart
 
 ```bash
 cp .env.example .env
 pip install -r requirements.txt
-pytest
 python -m src.researcher --no-llm
-```
-
-### Docker Deployment (alongside `ai-hardware-bot`)
-
-Update the read-only volume path in `docker-compose.yml` to point to your `ai-hardware-bot` data directory, then run:
-
-```bash
-docker compose up -d --build
 ```

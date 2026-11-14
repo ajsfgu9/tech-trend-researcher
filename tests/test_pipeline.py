@@ -4,7 +4,6 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-from src.models import Vertical
 from src.researcher import run_pipeline
 
 
@@ -27,13 +26,13 @@ def _create_mock_aggregator_db(db_path: str) -> None:
     )
     now = datetime.now(timezone.utc).isoformat()
     rows = [
-        ("https://arxiv.org/abs/2611.0001", "fp1", "Silicon Photonics CPO vs Copper at 1.6Tbps: 3.2pJ/bit Benchmark", "arXiv cs.AR", "arxiv", now, "semiconductor"),
-        ("https://semiengineering.com/cpo-vs-copper-2026", "fp2", "Co-Packaged Optics vs Copper 1.6Tbps 3.2pJ/bit Tradeoffs", "Semiconductor Engineering", "rss", now, "semiconductor"),
-        ("https://www.sec.gov/Archives/edgar/data/123/s1.htm", "fp3", "AI Infrastructure Neocloud Files S-1 for $2.4B GPU Cluster Capex", "SEC EDGAR 8-K", "sec", now, "financing"),
-        ("https://www.biorxiv.org/content/10.1101/2026.11.01", "fp4", "CRISPR Prime Editing Achieves 94% Fidelity in Phase 2 Trial", "bioRxiv Bioinformatics", "biorxiv", now, "biomedical"),
-        ("https://arxiv.org/abs/2611.0002", "fp5", "28-DOF Humanoid Dexterous Hand with Tactile VLA Control", "arXiv cs.RO", "arxiv", now, "robotics"),
-        ("https://arxiv.org/abs/2611.0003", "fp6", "Fault-Tolerant Surface Code Reaches 99.92% Logical Qubit Fidelity", "arXiv quant-ph", "arxiv", now, "quantum"),
-        ("https://news.ycombinator.com/item?id=999", "fp7", "Random Hacker News Post That Should Be Excluded", "Hacker News", "rss", now, "semiconductor"),
+        ("https://semianalysis.com/high-na-euv-exe5000", "fp1", "High-NA EUV EXE:5000 Insertion Acceleration at TSMC A16 and Intel Foundry", "SemiAnalysis", "rss", now, "semiconductor"),
+        ("https://news.ycombinator.com/item?id=101", "fp2", "ASML High-NA EUV EXE:5000 Pilot Wafer Yield and TSMC A16 Mask Reduction", "Hacker News", "api", now, "semiconductor"),
+        ("https://www.sec.gov/Archives/edgar/8k.htm", "fp3", "AI Datacenter Capex S-1 Filing for HBM4 & CoWoS GPU Cluster Financing", "SEC EDGAR", "sec", now, "financing"),
+        ("https://www.biorxiv.org/content/crispr", "fp4", "CRISPR Prime Editing Phase 2 Trial Reaches 94% Fidelity in Genomics", "bioRxiv", "biorxiv", now, "biomedical"),
+        ("https://arxiv.org/abs/2611.0002", "fp5", "Humanoid Robot Tactile Actuator with VLA Control", "arXiv cs.RO", "arxiv", now, "robotics"),
+        ("https://arxiv.org/abs/2611.0003", "fp6", "Fault-Tolerant Quantum Surface Code Logical Qubit Error Correction", "arXiv quant-ph", "arxiv", now, "quantum"),
+        ("https://example.com/iphone-battery", "fp7", "Best iPhone battery life tips for Black Friday", "GenericBlog", "rss", now, "consumer"),
     ]
     conn.executemany(
         "INSERT INTO items (url, content_fingerprint, title, source, source_type, published_at, category) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -43,35 +42,38 @@ def _create_mock_aggregator_db(db_path: str) -> None:
     conn.close()
 
 
-def test_end_to_end_offline_pipeline(tmp_path) -> None:
+def test_four_stage_pipeline(tmp_path) -> None:
     agg_db = str(tmp_path / "agi_hardware_trends.db")
-    trends_db = str(tmp_path / "tech_trends.db")
+    raw_db = str(tmp_path / "raw_events.db")
+    meta_db = str(tmp_path / "metadata_repo.db")
     out_json = str(tmp_path / "trends_output.json")
+    dash_md = str(tmp_path / "dashboard.md")
 
     _create_mock_aggregator_db(agg_db)
 
-    trends = run_pipeline(
+    clusters, md = run_pipeline(
         aggregator_db_path=agg_db,
-        trends_db_path=trends_db,
+        raw_db_path=raw_db,
+        metadata_db_path=meta_db,
         output_json_path=out_json,
+        dashboard_md_path=dash_md,
         lookback_hours=72,
         top_n=10,
-        verticals=[v.value for v in Vertical],
-        exclude_sources=("Hacker News",),
+        ingestion_threshold_tau=0.40,
         llm_provider="none",
         offline_db_only=True,
     )
 
-    assert len(trends) == 5  # 2 CPO items clustered into 1; HN item excluded
-    verticals_found = {t.vertical for t in trends}
-    assert verticals_found == {"semiconductor", "financing", "biomedical", "robotics", "quantum"}
+    topics = " ".join(c["topic"] for c in clusters)
+    assert "iPhone" not in topics
+    assert len(clusters) >= 4
 
-    cpo_trend = next(t for t in trends if t.vertical == "semiconductor")
-    assert cpo_trend.corroboration_count == 2
-    assert cpo_trend.primary_source_count == 1
-    assert cpo_trend.x_strategy["link_placement"] == "first_reply_only"
-    assert cpo_trend.x_algo_score > 40.0
+    euv = next(c for c in clusters if "High-NA EUV" in c["topic"])
+    assert euv["metrics"]["cross_platform_dispersion_count"] >= 2
+    assert "ASML" in euv["verified_entities"]
+    assert "llm_synthesis" in euv
 
     with open(out_json, "r", encoding="utf-8") as f:
-        exported = json.load(f)
-    assert exported["selected_count"] == 5
+        loaded = json.load(f)
+    assert isinstance(loaded, list)
+    assert "| Rank | Trend Cluster |" in md

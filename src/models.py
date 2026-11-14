@@ -1,64 +1,48 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from enum import Enum
+from dataclasses import dataclass, field
 from typing import Any
 
 
-class Vertical(str, Enum):
-    SEMICONDUCTOR = "semiconductor"
-    FINANCING = "financing"
-    BIOMEDICAL = "biomedical"
-    ROBOTICS = "robotics"
-    QUANTUM = "quantum"
-
-
-ALL_VERTICALS = [v.value for v in Vertical]
+SOURCE_AUTHORITY_WEIGHTS: dict[str, float] = {
+    "technical_news": 0.95,      # SemiAnalysis, SemiEngineering, TrendForce, DigiTimes, FierceBiotech
+    "hacker_news": 0.90,         # Firebase / Algolia API
+    "reddit": 0.85,              # r/semiconductors, r/hardware, r/localllama
+    "github": 0.85,              # GitHub Trending & Releases
+    "arxiv": 0.80,               # arXiv cs.AR, physics.app-ph, cs.RO, quant-ph, bioRxiv
+    "x_twitter": 0.70,           # Curated Tech/Semicon Lists
+    "general_social": 0.40,      # Bluesky, Threads, YouTube Tech
+}
 
 
 @dataclass
-class RawItem:
+class RawEvent:
+    event_id: str
+    source_platform: str
+    source_name: str
+    ingested_at_utc: str
+    published_at_utc: str
+    payload: dict[str, Any]
+
+
+@dataclass
+class NormalizedCandidate:
+    event_id: str
+    source_platform: str
+    source_name: str
     url: str
     title: str
-    source: str
-    published_at: str
-    vertical: str
-    summary: str = ""
-    source_type: str = "rss"
-    is_primary_source: bool = False
-
-
-@dataclass
-class TrendCluster:
-    cluster_id: str
-    topic: str
-    vertical: str
-    items: list[RawItem] = field(default_factory=list)
-    metrics_extracted: list[str] = field(default_factory=list)
-    corroboration_count: int = 1
-    primary_source_count: int = 0
-    recency_hours: float = 0.0
-    fairness_score: float = 0.0
-    x_algo_score: float = 0.0
-    combined_score: float = 0.0
-    x_strategy: dict[str, Any] = field(default_factory=dict)
-    why_tech_fanatics_care: str = ""
-    fair_caveat: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "cluster_id": self.cluster_id,
-            "topic": self.topic,
-            "vertical": self.vertical,
-            "combined_score": round(self.combined_score, 2),
-            "fairness_score": round(self.fairness_score, 2),
-            "x_algo_score": round(self.x_algo_score, 2),
-            "corroboration_count": self.corroboration_count,
-            "primary_source_count": self.primary_source_count,
-            "recency_hours": round(self.recency_hours, 1),
-            "metrics_extracted": self.metrics_extracted,
-            "why_tech_fanatics_care": self.why_tech_fanatics_care,
-            "fair_caveat": self.fair_caveat,
-            "x_strategy": self.x_strategy,
-            "sources": [asdict(item) for item in self.items],
-        }
+    body: str
+    published_at_utc: str
+    engagement_value: float
+    source_authority_ws: float
+    vertical: str = "semiconductor"
+    relevance_ri: float = 0.0
+    verified_entities: list[str] = field(default_factory=list)
+    velocity_vi: float = 0.0
+    dispersion_di: float = 1.0
+    dispersion_k: int = 1
+    base_score_mi: float = 0.0
+    llm_audit: dict[str, Any] = field(default_factory=dict)
+    llm_multiplier_phi: float = 1.0
+    final_score: float = 0.0
