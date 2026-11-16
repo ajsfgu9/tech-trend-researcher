@@ -1,28 +1,24 @@
-# Tech Trend Researcher (Editorial Viability & Automated Content Briefs)
+# Tech Trend Researcher (Longitudinal Trend Engine & Editorial Briefs)
 
-An editorial-grade tech & semiconductor trend discovery pipeline paired with [`jijiji88888/ai-hardware-bot`](https://github.com/jijiji88888/ai-hardware-bot). Instead of chasing raw social virality, it filters for **editorial viability**, **information asymmetry**, and **narrative tension** to produce ready-to-draft **Automated Content Briefs** (`content_briefs.json`) and an **Editorial Decision Matrix** (`dashboard.md`).
+## Strict Architectural Separation (`ai-hardware-bot` vs. `tech-trend-researcher`)
 
-## Editorial Architecture
+| Repository | Distinct Role | Core Responsibilities |
+| --- | --- | --- |
+| **[`jijiji88888/ai-hardware-bot`](https://github.com/jijiji88888/ai-hardware-bot)** ([PR #3](https://github.com/jijiji88888/ai-hardware-bot/pull/3)) | **Multi-Source Ingestion & Time-Series Storage** | Polls/scrapes all external RSS/Atom/API feeds, deduplicates URLs/fingerprints, and persists raw items + engagement observations into `agi_hardware_trends.db` (SQLite WAL mode). |
+| **[`ajsfgu9/tech-trend-researcher`](https://github.com/ajsfgu9/tech-trend-researcher)** | **Longitudinal Trend Discovery & Editorial Intelligence** | Performs **zero** duplicate web scraping. Reads `agi_hardware_trends.db` (`?mode=ro`) over 7d–30d windows to detect structural trends and generate ready-to-draft **Automated Content Briefs** (`content_briefs.json`). |
 
-1. **Editorial Source Re-Weighting (`W_e` in `src/models.py`)**:
-   - `primary_engineering` (GitHub, arXiv, bioRxiv, patents): `0.95`
-   - `debate_controversy` (Hacker News, Reddit `r/hardware`, `r/semiconductors`): `0.90`
-   - `financial_supply_chain` (SEC EDGAR, DigiTimes, TrendForce, SemiAnalysis): `0.85`
-   - `viral_amplification` (X/Twitter tech lists, Bluesky, Mastodon): `0.75`
-   - `mainstream_tech_media` (The Verge, TechCrunch, Tom's Hardware, Ars Technica): `0.40`
-2. **Viral Momentum & Information Asymmetry (`src/relevance_gate.py`, `src/scoring_engine.py`)**:
-   - Comments weighted **3x higher than likes** to capture active technical debate.
-   - Computes Information Asymmetry (`IA`) from specialized hardware/deep-tech token density and cross-platform controversy signals.
-3. **Executive Editor LLM Evaluator (`src/llm_auditor.py`)**:
-   - Scores Narrative Tension (`T`), Counter-Intuitive Factor (`C`), and Visual/Exploratory Depth (`E`):
-     `Phi_editorial = (0.35 * T + 0.40 * C + 0.25 * E) * Hook_Multiplier`
-4. **Automated Content Briefs & Decision Matrix (`src/clustering.py`)**:
-   - Outputs `content_briefs.json` (headline recommendation, `narrative_framework`, `story_angles`, `anchor_visual`, `content_structure`, `recommended_formats`) and `dashboard.md` mapped to the 4-tier Editorial Decision Matrix (`85-100` Lead Story, `70-84` Fast-Turnaround Thread, `50-69` Newsletter Segment, `<50` Archive).
+## How "Real Trends" Are Studied (`src/trend_analyzer.py`)
 
-## Quickstart
+Instead of relying on static point-in-time item scores or simple social cross-matching, `tech-trend-researcher` models a trend as a **longitudinal trajectory over time** across four quantitative pillars (with item-level scoring reserved strictly as a **20% sub-component**):
 
-```bash
-cp .env.example .env
-pip install -r requirements.txt
-python -m src.researcher --no-llm
-```
+1. **Temporal Burst & Second-Order Acceleration (EWMA + Page-Hinkley / CUSUM)**:
+   - Aggregates candidate items into daily/windowed buckets per `(Bottleneck Concept, Entity)` in `concept_timeseries`.
+   - Computes Exponentially Weighted Moving Average ($z_{\text{EWMA}}$), second-order velocity acceleration ($\Delta v = v_t - v_{t-1}$), and the cumulative sum ($\text{CUSUM}_t$) regime-shift statistic to classify trajectories into `breakout`, `accelerating`, `steady`, or `decaying`.
+2. **Cross-Layer Causal Propagation Graph (Lead-Lag S-Curve Diffusion)**:
+   - Tracks the chronological arrival order of a bottleneck across source layers:
+     `Primary Engineering (Stage 0: arXiv/GitHub/Patents)` $\rightarrow$ `Debate & Controversy (Stage 1: HN/Reddit)` $\rightarrow$ `Supply Chain & Financial (Stage 2: SemiAnalysis/TrendForce/SEC)` $\rightarrow$ `Mainstream Media (Stage 3)`.
+   - Rewards trajectories originating in Stage 0/1 that propagate into Stage 2 *before* Stage 3 mainstream saturation.
+3. **Novel Bottleneck Co-Occurrence Shift**:
+   - Compares current `(Entity, Bottleneck)` coupling frequency against historical co-occurrence baselines in `entity_graph` to surface newly emerging constraints (e.g., `TSMC` + `3.5x reticle interposer warpage`).
+4. **Reserved Item Sub-Score (20% Weight) & Executive Editor Framing (`src/scoring_engine.py`, `src/llm_auditor.py`)**:
+   - Retains the item-level viral/information-asymmetry score ($M_{\text{viral}}$) as a 20% tie-breaker alongside the 80% Longitudinal Structural Score, then applies the Executive Editor prompt ($\Phi_{\text{editorial}}$) to generate `content_briefs.json` and `dashboard.md`.

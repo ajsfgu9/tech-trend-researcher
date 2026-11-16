@@ -1,9 +1,5 @@
 requests>=2.31.0
-feedparser>=6.0.11
-beautifulsoup4>=4.12.3
 python-dotenv>=1.0.1
 numpy>=1.26.0
 pytest>=8.0.0
-# Optional heavy ML deps for production dense embeddings & HDBSCAN:
-# fastembed>=0.3.0
-# hdbscan>=0.8.33
+# Note: All live RSS/HTML scraping (feedparser, beautifulsoup4) belongs exclusively to ai-hardware-bot.

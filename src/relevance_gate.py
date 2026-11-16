@@ -1,9 +1,5 @@
 """
-Stage 2: Staging Area, Relevance Gate & Information Asymmetry Index (IA)
-
-- Normalizes platform engagement with comments weighted 3x higher than likes.
-- Computes Information Asymmetry (IA): specialized technical token density
-  paired with cross-platform tension / public confusion signals.
+Stage 2: Domain Relevance Gate & Bottleneck Concept Extraction
 """
 
 from __future__ import annotations
@@ -28,6 +24,19 @@ TIER1_WHITELIST = (
     "crispr", "phase 1", "phase 2", "phase 3", "humanoid", "actuator",
     "qubit", "surface code", "error correction", "capex", "s-1", "8-k",
 )
+
+BOTTLENECK_TAXONOMY: dict[str, tuple[str, ...]] = {
+    "CoWoS & Interposer Warpage": ("cowos", "interposer", "warpage", "2.5d packaging", "reticle"),
+    "High-NA EUV & Mask Yields": ("high-na", "exe:5000", "euv", "line-edge roughness", "mask"),
+    "Backside Power & Sub-2nm Nodes": ("backside power", "bspdn", "a16", "2nm", "gaafet"),
+    "HBM4 & Memory Wall": ("hbm3e", "hbm4", "cxl 3.1", "cxl", "memory pooling", "base die"),
+    "Co-Packaged Optics & Interconnect": ("silicon photonics", "cpo", "co-packaged optics", "nvlink", "optical interconnect"),
+    "Glass Core Substrates": ("glass core", "glass substrate", "abf substrate"),
+    "AI Capex & GPU Financing": ("capex", "s-1", "8-k", "gpu cluster", "debt financing", "neocloud"),
+    "Gene Editing & Clinical Trials": ("crispr", "prime editing", "phase 1", "phase 2", "phase 3", "mrna", "alphafold"),
+    "Embodied AI & Dexterous Robotics": ("humanoid", "actuator", "tactile", "vla", "dexterous", "embodied ai"),
+    "Fault-Tolerant Quantum QEC": ("logical qubit", "surface code", "error correction", "qec", "fault-tolerant"),
+}
 
 DOMAIN_ANCHOR_CORPUS: dict[str, str] = {
     "semiconductor": (
@@ -91,32 +100,26 @@ def _cosine_text_sim(text_a: str, text_b: str) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
+def extract_bottleneck_concepts(text: str, fallback_vertical: str) -> list[str]:
+    low = text.lower()
+    found: list[str] = []
+    for concept_name, kw_tuple in BOTTLENECK_TAXONOMY.items():
+        if any(kw in low for kw in kw_tuple):
+            found.append(concept_name)
+    if not found:
+        found.append(f"{fallback_vertical.title()} Architecture Shift")
+    return found
+
+
 def normalize_raw_event(ev: RawEvent) -> NormalizedCandidate:
     p = ev.payload
     title = str(p.get("title") or "").strip()
     body = str(p.get("summary") or p.get("selftext") or p.get("text") or "").strip()
     url = str(p.get("url") or "").strip()
 
-    if ev.source_platform == "hacker_news":
-        likes = float(p.get("points") or 0)
-        comments = float(p.get("num_comments") or 0)
-        eng = likes + 3.0 * comments
-    elif ev.source_platform == "reddit":
-        likes = float(p.get("score") or p.get("ups") or 0)
-        comments = float(p.get("num_comments") or 0)
-        eng = likes + 3.0 * comments
-    elif ev.source_platform == "x_twitter":
-        likes = float(p.get("likes") or 0)
-        comments = float(p.get("replies") or 0)
-        shares = float(p.get("retweets") or 0)
-        eng = likes + 3.0 * comments + 2.0 * shares
-    elif ev.source_platform == "github":
-        likes = float(p.get("stargazers_count") or 0)
-        comments = float(p.get("open_issues_count") or 0)
-        eng = likes + 3.0 * comments
-    else:
-        comments = 0.0
-        eng = 10.0
+    likes = float(p.get("points") or p.get("score") or p.get("ups") or p.get("likes") or p.get("engagement_points") or 0.0)
+    comments = float(p.get("num_comments") or p.get("replies") or p.get("comments_count") or 0.0)
+    eng = max(10.0, likes + 3.0 * comments)
 
     layer = PLATFORM_TO_EDITORIAL_LAYER.get(ev.source_platform, "financial_supply_chain")
     if any(m in ev.source_name.lower() for m in ("verge", "techcrunch", "tom's hardware", "ars technica")):
@@ -170,6 +173,7 @@ def run_relevance_gate(candidates: list[NormalizedCandidate], sim_threshold: flo
         cand.relevance_ri = round(best_sim, 4)
         cand.information_asymmetry_ia = round(ia_score, 4)
         cand.verified_entities = entities
+        cand.bottleneck_concepts = extract_bottleneck_concepts(full_text, best_vertical)
         passed.append(cand)
 
     return passed

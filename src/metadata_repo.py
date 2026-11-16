@@ -1,7 +1,7 @@
 """
 Metadata Repository (SQLite WAL mode)
-Tracks historical source baselines (mu_source, sigma_source), source reliability,
-false-positive rates, and entity relationship co-occurrence graphs.
+Stores historical entity/bottleneck daily time-series counts, co-occurrence baselines,
+and source engagement distributions so longitudinal trends can be detected reliably.
 """
 
 from __future__ import annotations
@@ -42,6 +42,13 @@ class MetadataRepository:
                     last_seen_utc TEXT NOT NULL,
                     PRIMARY KEY (entity_a, entity_b)
                 );
+                CREATE TABLE IF NOT EXISTS concept_timeseries (
+                    trend_key TEXT NOT NULL,
+                    bucket_date TEXT NOT NULL,
+                    mention_count INTEGER NOT NULL DEFAULT 0,
+                    weighted_intensity REAL NOT NULL DEFAULT 0.0,
+                    PRIMARY KEY (trend_key, bucket_date)
+                );
                 """
             )
 
@@ -59,8 +66,10 @@ class MetadataRepository:
             "x_twitter": (1500.0, 3000.0),
             "github": (80.0, 120.0),
             "technical_news": (10.0, 8.0),
+            "sec": (12.0, 8.0),
             "arxiv": (5.0, 4.0),
-            "general_social": (500.0, 1000.0),
+            "biorxiv": (5.0, 4.0),
+            "mainstream_media": (100.0, 150.0),
         }
         return defaults.get(source_platform, (20.0, 25.0))
 
@@ -104,3 +113,38 @@ class MetadataRepository:
                         """,
                         (sorted_ents[i], sorted_ents[j], now),
                     )
+
+    def get_co_occurrence_count(self, entity_a: str, entity_b: str) -> int:
+        a, b = sorted((entity_a, entity_b))
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT co_occurrence_count FROM entity_graph WHERE entity_a = ? AND entity_b = ?",
+                (a, b),
+            ).fetchone()
+            return int(row["co_occurrence_count"]) if row else 0
+
+    def record_concept_bucket(self, trend_key: str, bucket_date: str, count: int, intensity: float) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO concept_timeseries (trend_key, bucket_date, mention_count, weighted_intensity)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(trend_key, bucket_date) DO UPDATE SET
+                    mention_count = excluded.mention_count,
+                    weighted_intensity = excluded.weighted_intensity
+                """,
+                (trend_key, bucket_date, int(count), float(intensity)),
+            )
+
+    def get_concept_history(self, trend_key: str) -> list[tuple[str, int, float]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT bucket_date, mention_count, weighted_intensity
+                FROM concept_timeseries
+                WHERE trend_key = ?
+                ORDER BY bucket_date ASC
+                """,
+                (trend_key,),
+            ).fetchall()
+            return [(str(r["bucket_date"]), int(r["mention_count"]), float(r["weighted_intensity"])) for r in rows]

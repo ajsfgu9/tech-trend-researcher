@@ -1,5 +1,11 @@
 """
-Main Editorial Tech & Semiconductor Trend Researcher Pipeline
+Main Longitudinal Tech & Semiconductor Trend Researcher Pipeline
+
+Role Separation:
+- Reads exclusively from `ai-hardware-bot`'s SQLite DB (`agi_hardware_trends.db`).
+- Reserves item-level scoring (`scoring_engine.py`) as a 20% secondary sub-component.
+- Discovers real structural trends via `trend_analyzer.py` (EWMA/CUSUM burst detection,
+  cross-layer lead-lag causal propagation, and novel bottleneck co-occurrence shift).
 """
 
 from __future__ import annotations
@@ -11,12 +17,13 @@ import os
 
 from dotenv import load_dotenv
 
-from src.clustering import cluster_and_format_briefs
+from src.clustering import format_longitudinal_briefs
 from src.llm_auditor import evaluate_as_executive_editor
 from src.metadata_repo import MetadataRepository
 from src.raw_layer import ImmutableRawLayer
 from src.relevance_gate import normalize_raw_event, run_relevance_gate
 from src.scoring_engine import compute_editorial_base_scores
+from src.trend_analyzer import discover_longitudinal_trends
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("tech-trend-researcher")
@@ -28,32 +35,33 @@ def run_pipeline(
     metadata_db_path: str,
     output_json_path: str,
     dashboard_md_path: str,
-    lookback_hours: int = 72,
+    lookback_hours: int = 336,
     top_n: int = 12,
-    ingestion_threshold_tau: float = 0.45,
+    ingestion_threshold_tau: float = 0.40,
     llm_provider: str = "none",
-    offline_db_only: bool = False,
+    offline_db_only: bool = True,
 ) -> tuple[list[dict], str]:
     raw_layer = ImmutableRawLayer(raw_db_path=raw_db_path, aggregator_db_path=aggregator_db_path)
     metadata_repo = MetadataRepository(db_path=metadata_db_path)
 
     raw_events = raw_layer.ingest_from_aggregator_db(lookback_hours=lookback_hours)
-    if not offline_db_only:
-        raw_events.extend(raw_layer.ingest_live_feeds())
-    log.info("Stage 1 (Immutable Raw Layer): ingested %d raw events.", len(raw_events))
+    log.info("Stage 1 (Aggregator DB Bridge): loaded %d historical/recent events.", len(raw_events))
 
     normalized = [normalize_raw_event(ev) for ev in raw_events]
     gated = run_relevance_gate(normalized, sim_threshold=0.62)
-    log.info("Stage 2 (Relevance Gate & IA): %d/%d candidates passed.", len(gated), len(normalized))
+    log.info("Stage 2 (Relevance Gate & Bottleneck Extraction): %d/%d candidates passed.", len(gated), len(normalized))
 
-    scored = compute_editorial_base_scores(gated, metadata_repo)
-    above_tau = [c for c in scored if c.m_viral >= ingestion_threshold_tau]
-    log.info("Stage 3 (Editorial Base Scoring): %d candidates above tau=%.2f.", len(above_tau), ingestion_threshold_tau)
+    scored_items = compute_editorial_base_scores(gated, metadata_repo)
+    above_tau = [c for c in scored_items if c.m_viral >= ingestion_threshold_tau]
 
-    for cand in above_tau:
-        evaluate_as_executive_editor(cand, provider=llm_provider)
+    signals = discover_longitudinal_trends(above_tau, metadata_repo)
+    log.info("Stage 3 (Longitudinal Trend Engine): identified %d structural trend trajectories.", len(signals))
 
-    briefs, dashboard_md = cluster_and_format_briefs(above_tau, top_n=top_n)
+    for sig in signals[:top_n]:
+        lead = max(sig.candidates, key=lambda c: c.m_viral)
+        evaluate_as_executive_editor(lead, provider=llm_provider)
+
+    briefs, dashboard_md = format_longitudinal_briefs(signals, top_n=top_n)
 
     os.makedirs(os.path.dirname(os.path.abspath(output_json_path)), exist_ok=True)
     with open(output_json_path, "w", encoding="utf-8") as f:
@@ -62,17 +70,16 @@ def run_pipeline(
     with open(dashboard_md_path, "w", encoding="utf-8") as f:
         f.write(dashboard_md + "\n")
 
-    log.info("Stage 4 (Content Briefs): exported %d editorial briefs to %s and %s.", len(briefs), output_json_path, dashboard_md_path)
+    log.info("Stage 4 (Content Briefs): exported %d longitudinal briefs to %s.", len(briefs), output_json_path)
     return briefs, dashboard_md
 
 
 def main() -> None:
     load_dotenv()
-    parser = argparse.ArgumentParser(description="Editorial Tech & Semiconductor Trend Researcher")
-    parser.add_argument("--hours", type=int, default=int(os.getenv("LOOKBACK_HOURS", "72")))
+    parser = argparse.ArgumentParser(description="Longitudinal Tech & Semiconductor Trend Researcher")
+    parser.add_argument("--hours", type=int, default=int(os.getenv("LOOKBACK_HOURS", "336")))
     parser.add_argument("--top", type=int, default=int(os.getenv("TOP_N_TRENDS", "12")))
-    parser.add_argument("--tau", type=float, default=float(os.getenv("INGESTION_THRESHOLD_TAU", "0.45")))
-    parser.add_argument("--offline-db-only", action="store_true")
+    parser.add_argument("--tau", type=float, default=float(os.getenv("INGESTION_THRESHOLD_TAU", "0.40")))
     parser.add_argument("--no-llm", action="store_true")
     args = parser.parse_args()
 
@@ -88,7 +95,6 @@ def main() -> None:
         top_n=args.top,
         ingestion_threshold_tau=args.tau,
         llm_provider=llm_provider,
-        offline_db_only=args.offline_db_only,
     )
 
 
