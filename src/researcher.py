@@ -1,17 +1,15 @@
 """
 Main Two-Part Trend & Database-to-X Breakout Orchestrator (`src/researcher.py`)
 
-Distinct Roles:
-- `ai-hardware-bot`: Broad internet fetcher & LLM relevance sorter (`agi_hardware_trends.db`).
-- `tech-trend-researcher`: Broad social/X trend detector & Database-to-X Viral Catalyst engine.
-
-Final Output (`content_briefs.json` & `dashboard.md`) contains two explicit sections:
-1. `output_1_trending_now`: What is trending right now across the research pipeline, scored for
-   Longitudinal Trajectory + X/Twitter Phoenix Breakout Potential (`x_twitter_breakout_engine`).
-2. `output_2_database_viral_matches`: Cross-comparison against `ai-hardware-bot`'s sorted database
-   items (`has_viral_db_matches`: `"YES"` with the exact matching database items, their X Breakout
-   Score, and a ready-to-post `x_catalyst_playbook` so database discoveries actively become trends
-   on X/Twitter; or `"NO"` if none match).
+Features:
+1. Produces the two-part output (`output_1_trending_now` and `output_2_database_viral_matches`).
+2. Duplicates the complete output (formatted Telegram report + `dashboard.md` + `content_briefs.json`)
+   to a Telegram Bot via `src/telegram_notifier.py`.
+3. Operates autonomously in dual-trigger daemon mode (`src/autonomous_daemon.py`):
+   - Trigger A (Time-based): Runs periodically every `SCHEDULE_INTERVAL_MINUTES` (default 30m).
+   - Trigger B (Database-change): Watches `ai-hardware-bot`'s `agi_hardware_trends.db` (`MAX(id)`,
+     `COUNT(*)`, `MAX(created_at)`) every `DB_WATCH_POLL_SECONDS` (default 15s) and immediately
+     triggers a fresh run whenever new items are sorted into the database.
 """
 
 from __future__ import annotations
@@ -25,6 +23,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from src.autonomous_daemon import DBStateWatcher, run_autonomous_daemon, touch_heartbeat
 from src.clustering import format_longitudinal_briefs
 from src.llm_auditor import evaluate_as_executive_editor
 from src.metadata_repo import MetadataRepository
@@ -32,6 +31,7 @@ from src.models import RawEvent
 from src.raw_layer import ImmutableRawLayer
 from src.relevance_gate import normalize_raw_event, run_relevance_gate
 from src.scoring_engine import compute_editorial_base_scores
+from src.telegram_notifier import duplicate_output_to_telegram
 from src.trend_analyzer import discover_longitudinal_trends
 from src.viral_matcher import match_sorted_db_items_against_trends
 from src.x_breakout_engine import fetch_x_and_social_pulse
@@ -51,12 +51,14 @@ def run_pipeline(
     ingestion_threshold_tau: float = 0.35,
     llm_provider: str = "none",
     social_events_override: list[RawEvent] | None = None,
+    trigger_reason: str = "manual",
+    telegram_session: Any | None = None,
 ) -> tuple[dict[str, Any], str]:
     raw_layer = ImmutableRawLayer(raw_db_path=raw_db_path, aggregator_db_path=aggregator_db_path)
     metadata_repo = MetadataRepository(db_path=metadata_db_path)
 
     if social_events_override is not None:
-        raw_events = social_events_override
+        raw_events = list(social_events_override)
         raw_layer.persist_events(raw_events)
     else:
         raw_events = raw_layer.collect_broad_social_streams()
@@ -107,12 +109,15 @@ def run_pipeline(
 
     final_payload: dict[str, Any] = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "trigger_reason": trigger_reason,
         "output_1_trending_now": briefs,
         "output_2_database_viral_matches": db_viral_comparison,
     }
 
     md_lines = [
         "# Tech Trend Researcher — Two-Part X/Twitter Intelligence Report",
+        "",
+        f"- **Trigger**: `{trigger_reason}`",
         "",
         "## Output 1: What Is Trending Now & Poised to Break Out on X/Twitter",
         "",
@@ -148,8 +153,16 @@ def run_pipeline(
     with open(dashboard_md_path, "w", encoding="utf-8") as f:
         f.write(full_dashboard_md + "\n")
 
+    duplicate_output_to_telegram(
+        payload=final_payload,
+        dashboard_md=full_dashboard_md,
+        trigger_reason=trigger_reason,
+        session=telegram_session,
+    )
+
     log.info(
-        "Stage 4 Complete: %d trends in Output 1; Output 2 DB-to-X Viral Match = %s (%d items).",
+        "Stage 4 Complete (%s): %d trends in Output 1; Output 2 DB-to-X Viral Match = %s (%d items).",
+        trigger_reason,
         len(briefs),
         db_viral_comparison["has_viral_db_matches"],
         db_viral_comparison["matched_count"],
@@ -159,25 +172,53 @@ def run_pipeline(
 
 def main() -> None:
     load_dotenv()
-    parser = argparse.ArgumentParser(description="Longitudinal Tech Trend Researcher & DB-to-X Breakout Matcher")
+    parser = argparse.ArgumentParser(description="Autonomous Tech Trend Researcher & Telegram Duplicator")
     parser.add_argument("--hours", type=int, default=int(os.getenv("LOOKBACK_HOURS", "336")))
     parser.add_argument("--top", type=int, default=int(os.getenv("TOP_N_TRENDS", "12")))
     parser.add_argument("--tau", type=float, default=float(os.getenv("INGESTION_THRESHOLD_TAU", "0.35")))
     parser.add_argument("--no-llm", action="store_true")
+    parser.add_argument("--once", action="store_true", help="Run a single pass and exit instead of autonomous daemon mode")
     args = parser.parse_args()
 
     llm_provider = "none" if args.no_llm else os.getenv("LLM_PROVIDER", "none")
+    agg_db = os.getenv("AI_HARDWARE_DB_PATH", "/data/ai_hardware_bot/agi_hardware_trends.db")
+    raw_db = os.getenv("RAW_DB_PATH", "./data/raw_events.db")
+    meta_db = os.getenv("METADATA_DB_PATH", "./data/metadata_repo.db")
+    out_json = os.getenv("OUTPUT_JSON_PATH", "./data/content_briefs.json")
+    dash_md = os.getenv("DASHBOARD_MD_PATH", "./data/dashboard.md")
+    hb_file = os.getenv("HEALTHCHECK_FILE", "./data/heartbeat.txt")
 
-    run_pipeline(
-        aggregator_db_path=os.getenv("AI_HARDWARE_DB_PATH", "/data/ai_hardware_bot/agi_hardware_trends.db"),
-        raw_db_path=os.getenv("RAW_DB_PATH", "./data/raw_events.db"),
-        metadata_db_path=os.getenv("METADATA_DB_PATH", "./data/metadata_repo.db"),
-        output_json_path=os.getenv("OUTPUT_JSON_PATH", "./data/content_briefs.json"),
-        dashboard_md_path=os.getenv("DASHBOARD_MD_PATH", "./data/dashboard.md"),
-        lookback_hours=args.hours,
-        top_n=args.top,
-        ingestion_threshold_tau=args.tau,
-        llm_provider=llm_provider,
+    daemon_enabled = (
+        not args.once
+        and os.getenv("DAEMON_MODE", "true").strip().lower() in ("1", "true", "yes")
+    )
+
+    def _execute(reason: str) -> None:
+        run_pipeline(
+            aggregator_db_path=agg_db,
+            raw_db_path=raw_db,
+            metadata_db_path=meta_db,
+            output_json_path=out_json,
+            dashboard_md_path=dash_md,
+            lookback_hours=args.hours,
+            top_n=args.top,
+            ingestion_threshold_tau=args.tau,
+            llm_provider=llm_provider,
+            trigger_reason=reason,
+        )
+
+    if not daemon_enabled:
+        _execute("single_run")
+        touch_heartbeat(hb_file)
+        return
+
+    watcher = DBStateWatcher(aggregator_db_path=agg_db, state_db_path=meta_db)
+    run_autonomous_daemon(
+        pipeline_callback=_execute,
+        watcher=watcher,
+        schedule_interval_minutes=int(os.getenv("SCHEDULE_INTERVAL_MINUTES", "30")),
+        db_watch_poll_seconds=int(os.getenv("DB_WATCH_POLL_SECONDS", "15")),
+        heartbeat_path=hb_file,
     )
 
 
