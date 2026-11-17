@@ -5,12 +5,11 @@ Cross-compares:
 - Output 1: Active social trends discovered by `tech-trend-researcher` (`LongitudinalTrendSignal`)
 - Output 2: Previously sorted items stored in `ai-hardware-bot`'s SQLite database (`SortedDBItem`)
 
-Determines whether any previously sorted database item possesses the **identical viral feature
-signature** (shared bottleneck concept, specific technology/entity, hardware domain, and
-high technical relevance/tension) to go viral online:
-- Outputs `"has_viral_db_matches": "YES"` with the exact list of matching database items and their
-  shared viral features when matches exist.
-- Outputs `"has_viral_db_matches": "NO"` (`"matched_database_items": []`) when no database item matches.
+Crucially, for every database item, it also runs `compute_x_breakout_potential()` from
+`src/x_breakout_engine.py` so a deep technical discovery in `agi_hardware_trends.db` does NOT
+merely sit inside the database—it gets scored for **X/Twitter Breakout Potential** and packaged
+with a ready-to-post **X Catalyst Playbook** (cashtag hooks, contrarian reply bait, Phoenix v5
+visual card spec, and link-in-reply rule) to turn it into a real trend on X.
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ from typing import Any
 
 from src.models import LongitudinalTrendSignal, SortedDBItem
 from src.relevance_gate import TRACKED_ENTITIES, extract_bottleneck_concepts
+from src.x_breakout_engine import compute_x_breakout_potential
 
 STOPWORDS = {
     "the", "a", "an", "and", "or", "for", "of", "in", "on", "to", "with", "by",
@@ -40,6 +40,15 @@ def extract_viral_feature_signature(sig: LongitudinalTrendSignal) -> dict[str, A
     concepts = sorted({b for c in sig.candidates for b in c.bottleneck_concepts})
     all_titles = " ".join(c.title for c in sig.candidates)
     key_tokens = sorted(_tokenize(all_titles))[:25]
+    x_mentions = sum(1 for c in sig.candidates if c.source_platform == "x_twitter")
+    x_profile = compute_x_breakout_potential(
+        text=" ".join(f"{c.title} {c.body}" for c in sig.candidates),
+        entities=entities,
+        bottleneck_concept=sig.bottleneck_concept,
+        corroboration_count=len(sig.candidates),
+        has_primary_source=("primary_engineering" in sig.active_layers),
+        x_mentions_count=x_mentions,
+    )
     return {
         "bottleneck_concept": sig.bottleneck_concept,
         "all_concepts": concepts,
@@ -48,6 +57,7 @@ def extract_viral_feature_signature(sig: LongitudinalTrendSignal) -> dict[str, A
         "burst_regime": sig.burst_regime,
         "ewma_velocity_z": sig.ewma_velocity_z,
         "key_tokens": key_tokens,
+        "x_breakout_profile": x_profile,
     }
 
 
@@ -75,7 +85,7 @@ def match_sorted_db_items_against_trends(
             ]
         )
         item_concepts = set(extract_bottleneck_concepts(composite_text, item.category or "semiconductor"))
-        item_entities = {ent for ent in TRACKED_ENTITIES if ent.lower() in composite_text.lower()}
+        item_entities = sorted({ent for ent in TRACKED_ENTITIES if ent.lower() in composite_text.lower()})
         item_tokens = _tokenize(
             f"{item.title} {item.bottleneck_addressed} {item.specific_tech} {item.hardware_domain}"
         )
@@ -91,7 +101,7 @@ def match_sorted_db_items_against_trends(
             sig_tokens = set(sig_sig.get("key_tokens", []))
 
             shared_concepts = sorted(item_concepts & sig_concepts)
-            shared_ents = sorted(item_entities & sig_entities)
+            shared_ents = sorted(set(item_entities) & sig_entities)
             shared_toks = sorted(item_tokens & sig_tokens)
 
             concept_score = 0.45 if shared_concepts else 0.0
@@ -113,7 +123,21 @@ def match_sorted_db_items_against_trends(
                     "db_hardware_domain": item.hardware_domain,
                 }
 
-        if best_trend is not None and best_match_score >= match_threshold and item.url not in seen_db_urls:
+        db_x_breakout = compute_x_breakout_potential(
+            text=composite_text,
+            entities=item_entities,
+            bottleneck_concept=item.bottleneck_addressed or (best_trend.bottleneck_concept if best_trend else "Hardware Bottleneck"),
+            corroboration_count=2 if best_trend else 1,
+            has_primary_source=True,
+            x_mentions_count=0,
+        )
+
+        if (
+            best_trend is not None
+            and best_match_score >= match_threshold
+            and db_x_breakout["will_trend_on_x"] == "YES"
+            and item.url not in seen_db_urls
+        ):
             seen_db_urls.add(item.url)
             matched_records.append(
                 {
@@ -126,13 +150,20 @@ def match_sorted_db_items_against_trends(
                     "why_it_matters": item.why_it_matters,
                     "ai_revolution_thesis": item.ai_revolution_thesis,
                     "viral_match_score": round(best_match_score * 100.0, 1),
+                    "x_breakout_score": db_x_breakout["x_breakout_score"],
+                    "will_become_x_trend": db_x_breakout["will_trend_on_x"],
+                    "x_arbitrage_window": db_x_breakout["x_arbitrage_window"],
                     "matched_social_trend": best_trend.bottleneck_concept,
                     "matched_trend_regime": best_trend.burst_regime,
                     "identical_viral_features": shared_features,
+                    "x_catalyst_playbook": db_x_breakout["x_catalyst_playbook"],
                 }
             )
 
-    matched_records.sort(key=lambda r: (r["viral_match_score"], r["db_relevance_score"]), reverse=True)
+    matched_records.sort(
+        key=lambda r: (r["x_breakout_score"], r["viral_match_score"], r["db_relevance_score"]),
+        reverse=True,
+    )
 
     if matched_records:
         return {
@@ -140,7 +171,8 @@ def match_sorted_db_items_against_trends(
             "matched_count": len(matched_records),
             "summary": (
                 f"YES — {len(matched_records)} previously sorted item(s) in ai-hardware-bot's database "
-                "share identical bottleneck/entity features with active social trends and are primed to go viral."
+                "share identical viral features with live social momentum AND exceed the X/Twitter "
+                "Phoenix breakout threshold to become a trend on X."
             ),
             "matched_database_items": matched_records,
         }
@@ -148,6 +180,6 @@ def match_sorted_db_items_against_trends(
     return {
         "has_viral_db_matches": "NO",
         "matched_count": 0,
-        "summary": "NO — None of the previously sorted items in ai-hardware-bot's database match the current social trend features.",
+        "summary": "NO — None of the previously sorted items in ai-hardware-bot's database match the current social + X/Twitter breakout criteria.",
         "matched_database_items": [],
     }

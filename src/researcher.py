@@ -1,16 +1,17 @@
 """
-Main Two-Part Trend & Database Viral Matcher Orchestrator (`src/researcher.py`)
+Main Two-Part Trend & Database-to-X Breakout Orchestrator (`src/researcher.py`)
 
 Distinct Roles:
 - `ai-hardware-bot`: Broad internet fetcher & LLM relevance sorter (`agi_hardware_trends.db`).
-- `tech-trend-researcher`: Broad social trend detector & viral feature comparator.
+- `tech-trend-researcher`: Broad social/X trend detector & Database-to-X Viral Catalyst engine.
 
 Final Output (`content_briefs.json` & `dashboard.md`) contains two explicit sections:
-1. `output_1_trending_now`: What is trending right now across the research pipeline (EWMA/CUSUM
-   burst trajectory, cross-layer propagation, and Executive Editor content briefs).
+1. `output_1_trending_now`: What is trending right now across the research pipeline, scored for
+   Longitudinal Trajectory + X/Twitter Phoenix Breakout Potential (`x_twitter_breakout_engine`).
 2. `output_2_database_viral_matches`: Cross-comparison against `ai-hardware-bot`'s sorted database
-   items (`has_viral_db_matches`: `"YES"` with the exact matching database items and their shared
-   viral features, or `"NO"` if none match).
+   items (`has_viral_db_matches`: `"YES"` with the exact matching database items, their X Breakout
+   Score, and a ready-to-post `x_catalyst_playbook` so database discoveries actively become trends
+   on X/Twitter; or `"NO"` if none match).
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from src.relevance_gate import normalize_raw_event, run_relevance_gate
 from src.scoring_engine import compute_editorial_base_scores
 from src.trend_analyzer import discover_longitudinal_trends
 from src.viral_matcher import match_sorted_db_items_against_trends
+from src.x_breakout_engine import fetch_x_and_social_pulse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("tech-trend-researcher")
@@ -58,7 +60,10 @@ def run_pipeline(
         raw_layer.persist_events(raw_events)
     else:
         raw_events = raw_layer.collect_broad_social_streams()
-    log.info("Stage 1a (Broad Social Streams): collected %d social/community events.", len(raw_events))
+        x_pulse = fetch_x_and_social_pulse()
+        raw_layer.persist_events(x_pulse)
+        raw_events.extend(x_pulse)
+    log.info("Stage 1a (Broad Social & X Pulse): collected %d social/community events.", len(raw_events))
 
     sorted_db_items = raw_layer.load_sorted_db_items(lookback_hours=lookback_hours * 2)
     log.info("Stage 1b (ai-hardware-bot Sorted DB): loaded %d sorted items from %s.", len(sorted_db_items), aggregator_db_path)
@@ -107,13 +112,13 @@ def run_pipeline(
     }
 
     md_lines = [
-        "# Tech Trend Researcher — Two-Part Intelligence Report",
+        "# Tech Trend Researcher — Two-Part X/Twitter Intelligence Report",
         "",
-        "## Output 1: What Is Trending Now (Longitudinal Research Pipeline)",
+        "## Output 1: What Is Trending Now & Poised to Break Out on X/Twitter",
         "",
         trend_table_md,
         "",
-        "## Output 2: Previously Sorted Database Items With Identical Viral Features (`ai-hardware-bot` Cross-Comparison)",
+        "## Output 2: Sorted Database Items Primed to Become X/Twitter Trends (`ai-hardware-bot` Cross-Comparison)",
         "",
         f"- **Viral Feature Match Status**: **{db_viral_comparison['has_viral_db_matches']}**",
         f"- **Summary**: {db_viral_comparison['summary']}",
@@ -122,20 +127,16 @@ def run_pipeline(
     if db_viral_comparison["has_viral_db_matches"] == "YES":
         md_lines.extend(
             [
-                "| DB ID | Sorted DB Item Title | Source | DB Relevance | Viral Match Score | Matched Social Trend | Identical Features (`bottleneck_addressed` / `specific_tech`) |",
+                "| DB ID | Sorted DB Item Title | DB Relevance | Viral Match | X Breakout Score | X Window | Ready-to-Post X Hook Catalyst |",
                 "| --- | --- | --- | --- | --- | --- | --- |",
             ]
         )
         for m in db_viral_comparison["matched_database_items"]:
-            feats = m["identical_viral_features"]
-            feat_str = (
-                f"Bottleneck: `{feats.get('db_bottleneck_addressed') or ', '.join(feats.get('identical_bottleneck_concepts', []))}` | "
-                f"Tech: `{feats.get('db_specific_tech') or ', '.join(feats.get('shared_entities', []))}`"
-            )
+            hook_preview = m["x_catalyst_playbook"]["hook_tweet_draft"].replace("\n", " ")[:95]
             md_lines.append(
-                f"| `{m['db_item_id']}` | [{m['title'][:55]}]({m['url']}) | {m['source']} | "
+                f"| `{m['db_item_id']}` | [{m['title'][:48]}]({m['url']}) | "
                 f"{m['db_relevance_score']:.1f} | **{m['viral_match_score']:.1f}%** | "
-                f"**{m['matched_social_trend']}** (`{m['matched_trend_regime']}`) | {feat_str} |"
+                f"**{m['x_breakout_score']:.1f}** (`{m['will_become_x_trend']}`) | `{m['x_arbitrage_window']}` | {hook_preview}... |"
             )
 
     full_dashboard_md = "\n".join(md_lines)
@@ -148,7 +149,7 @@ def run_pipeline(
         f.write(full_dashboard_md + "\n")
 
     log.info(
-        "Stage 4 Complete: %d trends in Output 1; Output 2 DB Viral Match = %s (%d items).",
+        "Stage 4 Complete: %d trends in Output 1; Output 2 DB-to-X Viral Match = %s (%d items).",
         len(briefs),
         db_viral_comparison["has_viral_db_matches"],
         db_viral_comparison["matched_count"],
@@ -158,7 +159,7 @@ def run_pipeline(
 
 def main() -> None:
     load_dotenv()
-    parser = argparse.ArgumentParser(description="Longitudinal Tech Trend Researcher & DB Viral Matcher")
+    parser = argparse.ArgumentParser(description="Longitudinal Tech Trend Researcher & DB-to-X Breakout Matcher")
     parser.add_argument("--hours", type=int, default=int(os.getenv("LOOKBACK_HOURS", "336")))
     parser.add_argument("--top", type=int, default=int(os.getenv("TOP_N_TRENDS", "12")))
     parser.add_argument("--tau", type=float, default=float(os.getenv("INGESTION_THRESHOLD_TAU", "0.35")))

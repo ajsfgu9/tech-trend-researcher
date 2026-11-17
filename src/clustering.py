@@ -1,7 +1,7 @@
 """
 Stage 4b: Automated Content Briefs & Editorial Decision Matrix
-Synthesizes LongitudinalTrendSignal objects (burst trajectory + causal propagation +
-Executive Editor evaluation) into actionable content briefs.
+Synthesizes LongitudinalTrendSignal objects + X/Twitter Breakout Playbooks
+so every discovered trend is engineered to become a trend on X/Twitter.
 """
 
 from __future__ import annotations
@@ -11,16 +11,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.models import LongitudinalTrendSignal
+from src.x_breakout_engine import compute_x_breakout_potential
 
 
 def _decision_tier(score: float) -> tuple[str, str]:
     if score >= 85.0:
-        return "Lead Story / Deep-Dive Essay", "Dedicate a full 1,500-2,500 word post. High information asymmetry and strong conflict."
+        return "Lead Story + Flagship X Thread", "Launch an 8-part visual X thread + 1,800-word deep dive during the First-Mover X Window."
     if score >= 70.0:
-        return "Fast-Turnaround Thread / Commentary", "Publish a 5-8 post breakdown on X or LinkedIn within 4 hours while debate is active."
+        return "Fast-Turnaround X Breakout Thread", "Publish a 5-7 post X thread with spec/margin card within 2 hours to capture reply/bookmark velocity."
     if score >= 50.0:
-        return "Curated Newsletter Segment", "Add as a 200-word analyzed link in a weekly roundup."
-    return "Archive to Knowledge Graph", "Background technical context. Save for entity cross-referencing; do not publish standalone."
+        return "Single Contrarian X Post + Chart", "Post a single high-density X chart post with a polarizing technical question."
+    return "Archive to Knowledge Graph", "Background technical context. Save for entity cross-referencing; do not post standalone."
 
 
 def format_longitudinal_briefs(
@@ -35,8 +36,24 @@ def format_longitudinal_briefs(
         lead = max(sig.candidates, key=lambda c: c.editorial_score or c.m_viral)
         slug = re.sub(r"[^a-z0-9]+", "_", sig.bottleneck_concept.lower()).strip("_")[:28]
 
+        all_entities = sorted({e for c in sig.candidates for e in c.verified_entities})
+        x_mentions = sum(1 for c in sig.candidates if c.source_platform == "x_twitter")
+        x_breakout = compute_x_breakout_potential(
+            text=" ".join(f"{c.title} {c.body}" for c in sig.candidates),
+            entities=all_entities,
+            bottleneck_concept=sig.bottleneck_concept,
+            corroboration_count=len(sig.candidates),
+            has_primary_source=("primary_engineering" in sig.active_layers),
+            x_mentions_count=x_mentions,
+        )
+
         final_editorial_score = round(
-            min(99.5, 0.75 * sig.unified_trend_index + 0.25 * (lead.editorial_score or sig.unified_trend_index)),
+            min(
+                99.5,
+                0.55 * sig.unified_trend_index
+                + 0.25 * x_breakout["x_breakout_score"]
+                + 0.20 * (lead.editorial_score or sig.unified_trend_index),
+            ),
             2,
         )
         action_required, strategy = _decision_tier(final_editorial_score)
@@ -58,6 +75,7 @@ def format_longitudinal_briefs(
                 "editorial_score": final_editorial_score,
                 "decision_tier": action_required,
                 "editorial_verdict": ev.get("editorial_verdict", "PUBLISH_IMMEDIATELY" if final_editorial_score >= 70 else "MONITOR"),
+                "x_twitter_breakout_engine": x_breakout,
                 "longitudinal_trend_proof": {
                     "unified_trend_index": sig.unified_trend_index,
                     "longitudinal_structural_score_80pct": sig.longitudinal_score,
@@ -79,7 +97,7 @@ def format_longitudinal_briefs(
                     "cross_platform_dispersion": len(sig.active_layers),
                     "discussion_hotspots": hotspots,
                 },
-                "verified_entities": sorted({e for c in sig.candidates for e in c.verified_entities}),
+                "verified_entities": all_entities,
                 "narrative_framework": {
                     "the_hook": nf.get("the_hook", ""),
                     "the_misconception": nf.get("the_misconception", ""),
@@ -97,7 +115,7 @@ def format_longitudinal_briefs(
                 ],
                 "recommended_formats": {
                     "long_form_essay": "1,800 words on Substack / technical blog" if final_editorial_score >= 85 else "Optional deep-dive",
-                    "x_thread": "5-8 part visual thread anchored by schematic/table",
+                    "x_thread": x_breakout["x_catalyst_playbook"]["optimal_format"],
                     "linkedin_post": "Condensed summary targeting hardware investors and infrastructure buyers",
                 },
                 "content_strategy_note": strategy,
@@ -106,15 +124,16 @@ def format_longitudinal_briefs(
         )
 
     lines = [
-        "| Rank | Editorial Score | Regime | Causal Chain | Bottleneck Concept | Headline Recommendation | Action Required |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| Rank | Editorial Score | X Breakout Score | X Window | Regime | Bottleneck Concept | Cashtags | Action Required |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for rank, b in enumerate(briefs, start=1):
         lp = b["longitudinal_trend_proof"]
-        chain = " -> ".join(lp["causal_propagation_chain"])
+        xb = b["x_twitter_breakout_engine"]
+        tags = " ".join(xb["target_x_cashtags"]) or "-"
         lines.append(
-            f"| **{rank:02d}** | **{b['editorial_score']:.1f}** | `{lp['burst_regime']}` (CUSUM {lp['cusum_regime_stat']:.2f}) | "
-            f"{chain} | **{b['bottleneck_concept']}** | {b['headline_recommendation'][:50]} | {b['decision_tier']} |"
+            f"| **{rank:02d}** | **{b['editorial_score']:.1f}** | **{xb['x_breakout_score']:.1f}** (`{xb['will_trend_on_x']}`) | "
+            f"`{xb['x_arbitrage_window']}` | `{lp['burst_regime']}` | **{b['bottleneck_concept']}** | {tags} | {b['decision_tier']} |"
         )
 
     return briefs, "\n".join(lines)
