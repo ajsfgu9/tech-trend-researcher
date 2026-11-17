@@ -4,10 +4,12 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from src.models import RawEvent
 from src.researcher import run_pipeline
 
 
-def _create_mock_longitudinal_aggregator_db(db_path: str) -> None:
+def _create_sorted_ai_hardware_bot_db(db_path: str, include_matching_item: bool = True) -> None:
+    """Create a realistic ai-hardware-bot SQLite DB with its 19 LLM-sorted columns."""
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute(
@@ -21,74 +23,141 @@ def _create_mock_longitudinal_aggregator_db(db_path: str) -> None:
             source_type TEXT,
             published_at TEXT,
             category TEXT,
-            engagement_points REAL DEFAULT 0.0,
-            comments_count REAL DEFAULT 0.0
+            hardware_domain TEXT,
+            bottleneck_addressed TEXT,
+            specific_tech TEXT,
+            relevance_score REAL,
+            why_it_matters TEXT,
+            ai_revolution_thesis TEXT,
+            telegram_summary TEXT,
+            raw_summary TEXT,
+            raw_llm_json TEXT,
+            sent_alert INTEGER DEFAULT 0,
+            digest_sent INTEGER DEFAULT 0,
+            created_at TEXT
         )
         """
     )
     now = datetime.now(timezone.utc)
-    d3 = (now - timedelta(days=3)).isoformat()
     d2 = (now - timedelta(days=2)).isoformat()
-    d1 = (now - timedelta(days=1)).isoformat()
-    d0 = now.isoformat()
 
-    rows = [
-        ("https://arxiv.org/abs/2611.0101", "fp1", "Thermomechanical Interposer Warpage in 3.5x Reticle CoWoS Packaging", "arXiv cs.AR", "arxiv", d3, "semiconductor", 15.0, 4.0),
-        ("https://reddit.com/r/semiconductors/cowos_warpage", "fp2", "TSMC CoWoS interposer warpage yield bottleneck discussion", "r/semiconductors", "reddit", d2, "semiconductor", 85.0, 42.0),
-        ("https://news.ycombinator.com/item?id=202", "fp3", "Why CoWoS Packaging Yields Are Quietly Capping AI Margins", "Hacker News", "hn", d1, "semiconductor", 240.0, 110.0),
-        ("https://semianalysis.com/cowos-squeeze-2026", "fp4", "The CoWoS Squeeze: TSMC CoWoS Interposer Warpage & Packaging Yields", "SemiAnalysis", "rss", d0, "semiconductor", 310.0, 95.0),
-        ("https://www.sec.gov/Archives/edgar/8k.htm", "fp5", "AI Datacenter Capex S-1 Filing for HBM4 & GPU Cluster Debt Financing", "SEC EDGAR", "sec", d0, "financing", 40.0, 12.0),
-        ("https://www.biorxiv.org/content/crispr", "fp6", "CRISPR Prime Editing Phase 2 Trial Reaches 94% Fidelity in Genomics", "bioRxiv", "biorxiv", d1, "biomedical", 55.0, 18.0),
-        ("https://arxiv.org/abs/2611.0002", "fp7", "Humanoid Robot Tactile Actuator with VLA Dexterous Control", "arXiv cs.RO", "arxiv", d1, "robotics", 45.0, 10.0),
-        ("https://arxiv.org/abs/2611.0003", "fp8", "Fault-Tolerant Quantum Surface Code Logical Qubit Error Correction", "arXiv quant-ph", "arxiv", d0, "quantum", 50.0, 14.0),
-        ("https://example.com/iphone-battery", "fp9", "Best iPhone battery life tips for Black Friday", "GenericBlog", "rss", d0, "consumer", 500.0, 200.0),
-    ]
-    conn.executemany(
-        """
-        INSERT INTO items
-        (url, content_fingerprint, title, source, source_type, published_at, category, engagement_points, comments_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        rows,
-    )
+    if include_matching_item:
+        rows = [
+            (
+                "https://semiengineering.com/cowos-interposer-warpage-analysis",
+                "fp_db_1",
+                "Thermomechanical Warpage in 3.5x Reticle TSMC CoWoS Interposers",
+                "Semiconductor Engineering",
+                "specialist_rss",
+                d2,
+                "packaging",
+                "Advanced Packaging",
+                "CoWoS interposer warpage and substrate yield limits",
+                "TSMC CoWoS-L 3.5x reticle silicon interposer",
+                9.2,
+                "Interposer warpage above 3.5x reticle directly caps AI GPU packaging yields.",
+                "Packaging yield rather than wafer lithography is the binding constraint on 2026-2027 AI cluster delivery.",
+                "TSMC CoWoS warpage analysis",
+                "Detailed finite-element analysis of CoWoS interposer warpage and yield bottlenecks.",
+                "{}",
+                1,
+                1,
+                d2,
+            ),
+        ]
+        conn.executemany(
+            """
+            INSERT INTO items (
+                url, content_fingerprint, title, source, source_type, published_at, category,
+                hardware_domain, bottleneck_addressed, specific_tech,
+                relevance_score, why_it_matters, ai_revolution_thesis,
+                telegram_summary, raw_summary, raw_llm_json,
+                sent_alert, digest_sent, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
     conn.commit()
     conn.close()
 
 
-def test_longitudinal_trend_pipeline(tmp_path) -> None:
-    agg_db = str(tmp_path / "agi_hardware_trends.db")
-    raw_db = str(tmp_path / "raw_events.db")
-    meta_db = str(tmp_path / "metadata_repo.db")
-    out_json = str(tmp_path / "content_briefs.json")
-    dash_md = str(tmp_path / "dashboard.md")
+def test_two_part_output_yes_and_no(tmp_path) -> None:
+    now = datetime.now(timezone.utc)
+    d1 = (now - timedelta(days=1)).isoformat()
+    d0 = now.isoformat()
 
-    _create_mock_longitudinal_aggregator_db(agg_db)
+    social_events = [
+        RawEvent(
+            event_id="soc_1",
+            source_platform="reddit",
+            source_name="r/semiconductors",
+            ingested_at_utc=d1,
+            published_at_utc=d1,
+            payload={
+                "url": "https://reddit.com/r/semiconductors/cowos_debate",
+                "title": "TSMC CoWoS interposer warpage yield bottleneck is worse than expected",
+                "summary": "Debating 3.5x reticle CoWoS warpage and packaging scrap rates.",
+                "score": 180.0,
+                "num_comments": 75.0,
+            },
+        ),
+        RawEvent(
+            event_id="soc_2",
+            source_platform="hacker_news",
+            source_name="Hacker News",
+            ingested_at_utc=d0,
+            published_at_utc=d0,
+            payload={
+                "url": "https://news.ycombinator.com/item?id=301",
+                "title": "The CoWoS Squeeze: Why Advanced Packaging Yields Are Quietly Capping AI Margins",
+                "summary": "TSMC CoWoS interposer warpage and substrate shortage discussion.",
+                "points": 320.0,
+                "num_comments": 145.0,
+            },
+        ),
+    ]
 
-    briefs, md = run_pipeline(
-        aggregator_db_path=agg_db,
-        raw_db_path=raw_db,
-        metadata_db_path=meta_db,
-        output_json_path=out_json,
-        dashboard_md_path=dash_md,
+    agg_db_yes = str(tmp_path / "agi_yes.db")
+    _create_sorted_ai_hardware_bot_db(agg_db_yes, include_matching_item=True)
+
+    payload_yes, md_yes = run_pipeline(
+        aggregator_db_path=agg_db_yes,
+        raw_db_path=str(tmp_path / "raw_yes.db"),
+        metadata_db_path=str(tmp_path / "meta_yes.db"),
+        output_json_path=str(tmp_path / "out_yes.json"),
+        dashboard_md_path=str(tmp_path / "dash_yes.md"),
         lookback_hours=336,
-        top_n=10,
+        top_n=5,
         ingestion_threshold_tau=0.35,
         llm_provider="none",
+        social_events_override=list(social_events),
     )
 
-    headlines = " ".join(b["headline_recommendation"] for b in briefs)
-    assert "iPhone" not in headlines
-    assert len(briefs) == 5
+    assert len(payload_yes["output_1_trending_now"]) >= 1
+    out2_yes = payload_yes["output_2_database_viral_matches"]
+    assert out2_yes["has_viral_db_matches"] == "YES"
+    assert out2_yes["matched_count"] == 1
+    assert "Thermomechanical Warpage" in out2_yes["matched_database_items"][0]["title"]
+    assert "**YES**" in md_yes
 
-    cowos = next(b for b in briefs if "CoWoS" in b["bottleneck_concept"])
-    proof = cowos["longitudinal_trend_proof"]
-    assert proof["origin_layer"] == "primary_engineering"
-    assert len(proof["causal_propagation_chain"]) == 3
-    assert proof["burst_regime"] in ("breakout", "accelerating")
-    assert proof["longitudinal_structural_score_80pct"] > 0
-    assert proof["reserved_item_subscore_20pct"] > 0
+    agg_db_no = str(tmp_path / "agi_no.db")
+    _create_sorted_ai_hardware_bot_db(agg_db_no, include_matching_item=False)
 
-    with open(out_json, "r", encoding="utf-8") as f:
-        loaded = json.load(f)
-    assert isinstance(loaded, list)
-    assert "| Rank | Editorial Score | Regime | Causal Chain |" in md
+    payload_no, md_no = run_pipeline(
+        aggregator_db_path=agg_db_no,
+        raw_db_path=str(tmp_path / "raw_no.db"),
+        metadata_db_path=str(tmp_path / "meta_no.db"),
+        output_json_path=str(tmp_path / "out_no.json"),
+        dashboard_md_path=str(tmp_path / "dash_no.md"),
+        lookback_hours=336,
+        top_n=5,
+        ingestion_threshold_tau=0.35,
+        llm_provider="none",
+        social_events_override=list(social_events),
+    )
+
+    out2_no = payload_no["output_2_database_viral_matches"]
+    assert out2_no["has_viral_db_matches"] == "NO"
+    assert out2_no["matched_count"] == 0
+    assert out2_no["matched_database_items"] == []
+    assert "**NO**" in md_no

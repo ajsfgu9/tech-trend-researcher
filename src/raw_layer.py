@@ -1,11 +1,15 @@
 """
-Stage 1: Read-Only Aggregator Bridge (`src/raw_layer.py`)
+Stage 1: Broad Social Trend Collectors & `ai-hardware-bot` Sorted DB Reader (`src/raw_layer.py`)
 
-Strict Separation of Concerns:
-- All external HTTP/RSS/API scraping lives exclusively in `jijiji88888/ai-hardware-bot`.
-- `tech-trend-researcher` performs ZERO duplicate network scraping; it reads ingested
-  items and historical time-series observations from `agi_hardware_trends.db` in
-  read-only SQLite WAL mode (`?mode=ro`).
+Distinct Roles:
+1. `collect_broad_social_streams()`: Polls broad social & developer discussion channels
+   (Specialized Subreddits `r/semiconductors`, `r/hardware`, `r/LocalLLaMA`, `r/biotech`,
+   `r/robotics`, `r/QuantumComputing`, Hacker News Algolia, GitHub active repos/discussions)
+   to discover what is actively trending and debating online.
+2. `load_sorted_db_items()`: Reads the LLM-sorted `items` table from `jijiji88888/ai-hardware-bot`
+   (`agi_hardware_trends.db`, columns `hardware_domain`, `bottleneck_addressed`, `specific_tech`,
+   `relevance_score`, `why_it_matters`, `ai_revolution_thesis`, `raw_summary`) so the researcher
+   can cross-compare active social trends against previously sorted database items.
 """
 
 from __future__ import annotations
@@ -17,33 +21,14 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from src.models import RawEvent
+import requests
+
+from src.models import RawEvent, SortedDBItem
 
 log = logging.getLogger(__name__)
 
 
-def _infer_platform(source_name: str, source_type: str, url: str) -> str:
-    s_low = f"{source_name} {source_type} {url}".lower()
-    if "hacker news" in s_low or "ycombinator" in s_low or source_type == "hn":
-        return "hacker_news"
-    if "reddit" in s_low or "r/" in s_low:
-        return "reddit"
-    if "arxiv" in s_low:
-        return "arxiv"
-    if "biorxiv" in s_low or "medrxiv" in s_low:
-        return "biorxiv"
-    if "github.com" in s_low:
-        return "github"
-    if "sec.gov" in s_low or "edgar" in s_low or "8-k" in s_low or "s-1" in s_low:
-        return "sec"
-    if any(m in s_low for m in ("verge", "techcrunch", "tom's hardware", "ars technica", "reuters", "bloomberg")):
-        return "mainstream_media"
-    return "technical_news"
-
-
 class ImmutableRawLayer:
-    """Reads ingested records from ai-hardware-bot's SQLite DB without duplicate scraping."""
-
     def __init__(self, raw_db_path: str, aggregator_db_path: str | None = None) -> None:
         self.raw_db_path = raw_db_path
         self.aggregator_db_path = aggregator_db_path
@@ -91,91 +76,178 @@ class ImmutableRawLayer:
                 inserted += cur.rowcount
         return inserted
 
-    def ingest_from_aggregator_db(self, lookback_hours: int = 336) -> list[RawEvent]:
+    def collect_broad_social_streams(self) -> list[RawEvent]:
         """
-        Read historical and recent items from jijiji88888/ai-hardware-bot (`agi_hardware_trends.db`)
-        over a multi-day window (default 14 days / 336h) for longitudinal trend analysis.
+        Fetch live discussion & velocity streams from broad social media and developer hubs
+        (Reddit, Hacker News Algolia, GitHub) to identify what is currently trending.
+        """
+        now_iso = datetime.now(timezone.utc).isoformat()
+        events: list[RawEvent] = []
+
+        for sub in ("semiconductors", "hardware", "LocalLLaMA", "biotech", "robotics", "QuantumComputing"):
+            try:
+                resp = requests.get(
+                    f"https://www.reddit.com/r/{sub}/hot.json?limit=20",
+                    headers={"User-Agent": "TechTrendResearcher/3.0"},
+                    timeout=10,
+                )
+                if resp.ok:
+                    for child in resp.json().get("data", {}).get("children", []):
+                        post = child.get("data", {})
+                        url = post.get("url") or f"https://www.reddit.com{post.get('permalink', '')}"
+                        title = str(post.get("title") or "").strip()
+                        if not url or not title:
+                            continue
+                        pub_ts = datetime.fromtimestamp(float(post.get("created_utc") or 0), tz=timezone.utc).isoformat()
+                        eid = hashlib.sha1(f"reddit:{url}".encode("utf-8")).hexdigest()[:16]
+                        events.append(
+                            RawEvent(
+                                event_id=eid,
+                                source_platform="reddit",
+                                source_name=f"r/{sub}",
+                                ingested_at_utc=now_iso,
+                                published_at_utc=pub_ts,
+                                payload={
+                                    "url": url,
+                                    "title": title,
+                                    "summary": str(post.get("selftext") or "")[:1200],
+                                    "score": float(post.get("score") or post.get("ups") or 0.0),
+                                    "num_comments": float(post.get("num_comments") or 0.0),
+                                },
+                            )
+                        )
+            except Exception as exc:
+                log.warning("Reddit r/%s collection skipped: %s", sub, exc)
+
+        try:
+            resp = requests.get(
+                "https://hn.algolia.com/api/v1/search?tags=story&numericFilters=points>20&hitsPerPage=40",
+                timeout=10,
+            )
+            if resp.ok:
+                for hit in resp.json().get("hits", []):
+                    url = hit.get("url") or f"https://news.ycombinator.com/item?id={hit.get('objectID')}"
+                    title = str(hit.get("title") or "").strip()
+                    if not url or not title:
+                        continue
+                    eid = hashlib.sha1(f"hacker_news:{url}".encode("utf-8")).hexdigest()[:16]
+                    events.append(
+                        RawEvent(
+                            event_id=eid,
+                            source_platform="hacker_news",
+                            source_name="Hacker News",
+                            ingested_at_utc=now_iso,
+                            published_at_utc=str(hit.get("created_at") or now_iso),
+                            payload={
+                                "url": url,
+                                "title": title,
+                                "summary": str(hit.get("story_text") or "")[:1000],
+                                "points": float(hit.get("points") or 0.0),
+                                "num_comments": float(hit.get("num_comments") or 0.0),
+                            },
+                        )
+                    )
+        except Exception as exc:
+            log.warning("HN Algolia collection skipped: %s", exc)
+
+        try:
+            resp = requests.get(
+                "https://api.github.com/search/repositories",
+                params={
+                    "q": "topic:cuda OR topic:rocm OR topic:riscv OR topic:quantum OR topic:robotics",
+                    "sort": "updated",
+                    "order": "desc",
+                    "per_page": 20,
+                },
+                headers={"User-Agent": "TechTrendResearcher/3.0", "Accept": "application/vnd.github+json"},
+                timeout=10,
+            )
+            if resp.ok:
+                for repo in resp.json().get("items", []):
+                    url = str(repo.get("html_url") or "").strip()
+                    name = str(repo.get("full_name") or "").strip()
+                    desc = str(repo.get("description") or "").strip()
+                    if not url or not name:
+                        continue
+                    eid = hashlib.sha1(f"github:{url}".encode("utf-8")).hexdigest()[:16]
+                    events.append(
+                        RawEvent(
+                            event_id=eid,
+                            source_platform="github",
+                            source_name="GitHub",
+                            ingested_at_utc=now_iso,
+                            published_at_utc=str(repo.get("pushed_at") or now_iso),
+                            payload={
+                                "url": url,
+                                "title": f"{name}: {desc}"[:220],
+                                "summary": desc,
+                                "points": float(repo.get("stargazers_count") or 0.0),
+                                "num_comments": float(repo.get("open_issues_count") or 0.0),
+                            },
+                        )
+                    )
+        except Exception as exc:
+            log.warning("GitHub collection skipped: %s", exc)
+
+        self.persist_events(events)
+        return events
+
+    def load_sorted_db_items(self, lookback_hours: int = 720, min_relevance: float = 0.0) -> list[SortedDBItem]:
+        """
+        Read previously sorted, LLM-classified items from jijiji88888/ai-hardware-bot
+        (`agi_hardware_trends.db`) in read-only SQLite WAL mode.
         """
         if not self.aggregator_db_path or not os.path.exists(self.aggregator_db_path):
-            log.warning("Aggregator DB not found at %s", self.aggregator_db_path)
+            log.warning("ai-hardware-bot DB not found at %s", self.aggregator_db_path)
             return []
 
         uri = f"file:{os.path.abspath(self.aggregator_db_path)}?mode=ro"
         conn = sqlite3.connect(uri, uri=True, timeout=10.0)
         conn.row_factory = sqlite3.Row
-        now_iso = datetime.now(timezone.utc).isoformat()
         cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
-        events: list[RawEvent] = []
+        sorted_items: list[SortedDBItem] = []
         try:
-            tables = {
-                r["name"]
-                for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-            }
-            if "items" not in tables:
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(items)").fetchall()}
+            if not cols:
                 return []
 
-            cols = {r["name"] for r in conn.execute("PRAGMA table_info(items)").fetchall()}
-            select_cols = [
-                c for c in (
-                    "url", "title", "source", "source_type", "published_at",
-                    "category", "summary", "engagement_points", "comments_count",
-                )
-                if c in cols
-            ]
-            order_col = "published_at" if "published_at" in cols else "id"
-            rows = conn.execute(
-                f"SELECT {', '.join(select_cols)} FROM items ORDER BY {order_col} DESC LIMIT 2500"
-            ).fetchall()
-
-            obs_by_url: dict[str, dict[str, float]] = {}
-            if "item_observations" in tables:
-                for obs in conn.execute(
-                    "SELECT url, MAX(engagement_points) AS max_pts, MAX(comments_count) AS max_com "
-                    "FROM item_observations GROUP BY url"
-                ).fetchall():
-                    obs_by_url[str(obs["url"])] = {
-                        "points": float(obs["max_pts"] or 0.0),
-                        "num_comments": float(obs["max_com"] or 0.0),
-                    }
-
+            rows = conn.execute("SELECT * FROM items ORDER BY id DESC LIMIT 2000").fetchall()
             for r in rows:
                 d = dict(r)
-                pub_str = d.get("published_at") or now_iso
-                try:
-                    dt = datetime.fromisoformat(str(pub_str).replace("Z", "+00:00"))
-                    if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
-                    if dt < cutoff:
-                        continue
-                    pub_iso = dt.isoformat()
-                except ValueError:
-                    pub_iso = now_iso
+                pub_str = str(d.get("published_at") or d.get("created_at") or "")
+                if pub_str:
+                    try:
+                        dt = datetime.fromisoformat(pub_str.replace("Z", "+00:00"))
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        if dt < cutoff:
+                            continue
+                    except ValueError:
+                        pass
 
-                url = str(d.get("url") or "")
-                src = str(d.get("source") or "ai-hardware-bot")
-                stype = str(d.get("source_type") or "")
-                platform = _infer_platform(src, stype, url)
+                rel = float(d.get("relevance_score") or 0.0)
+                if rel < min_relevance:
+                    continue
 
-                if url in obs_by_url:
-                    d["points"] = max(float(d.get("engagement_points") or 0.0), obs_by_url[url]["points"])
-                    d["num_comments"] = max(float(d.get("comments_count") or 0.0), obs_by_url[url]["num_comments"])
-                else:
-                    d.setdefault("points", float(d.get("engagement_points") or 0.0))
-                    d.setdefault("num_comments", float(d.get("comments_count") or 0.0))
-
-                eid = hashlib.sha1(f"{platform}:{url}:{pub_iso}".encode("utf-8")).hexdigest()[:16]
-                events.append(
-                    RawEvent(
-                        event_id=eid,
-                        source_platform=platform,
-                        source_name=src,
-                        ingested_at_utc=now_iso,
-                        published_at_utc=pub_iso,
-                        payload=d,
+                sorted_items.append(
+                    SortedDBItem(
+                        id=int(d.get("id") or 0),
+                        url=str(d.get("url") or ""),
+                        title=str(d.get("title") or ""),
+                        source=str(d.get("source") or ""),
+                        source_type=str(d.get("source_type") or ""),
+                        published_at=pub_str,
+                        category=str(d.get("category") or ""),
+                        hardware_domain=str(d.get("hardware_domain") or ""),
+                        bottleneck_addressed=str(d.get("bottleneck_addressed") or ""),
+                        specific_tech=str(d.get("specific_tech") or ""),
+                        relevance_score=rel,
+                        why_it_matters=str(d.get("why_it_matters") or ""),
+                        ai_revolution_thesis=str(d.get("ai_revolution_thesis") or ""),
+                        raw_summary=str(d.get("raw_summary") or d.get("summary") or ""),
                     )
                 )
         finally:
             conn.close()
 
-        self.persist_events(events)
-        return events
+        return sorted_items

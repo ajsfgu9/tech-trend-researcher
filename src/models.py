@@ -4,16 +4,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-# Editorial Source Layer Weights (W_e)
 EDITORIAL_SOURCE_WEIGHTS: dict[str, float] = {
-    "primary_engineering": 0.95,     # arXiv, bioRxiv, GitHub Issues/Commits, USPTO patents
-    "debate_controversy": 0.90,      # Hacker News, Reddit (r/hardware, r/semiconductors, etc.)
-    "financial_supply_chain": 0.85,  # SEC filings, DigiTimes, TrendForce, SemiAnalysis, ServeTheHome
+    "primary_engineering": 0.95,     # GitHub, arXiv, bioRxiv, patents
+    "debate_controversy": 0.90,      # Reddit, Hacker News
+    "financial_supply_chain": 0.85,  # SEC filings, DigiTimes, TrendForce, SemiAnalysis
     "viral_amplification": 0.75,     # X/Twitter tech lists, Bluesky, Mastodon
     "mainstream_tech_media": 0.40,   # The Verge, TechCrunch, Tom's Hardware, Ars Technica
 }
 
-# Causal Propagation Order (Stage 0 -> Stage 3 on the S-curve)
 CAUSAL_LAYER_ORDER: dict[str, int] = {
     "primary_engineering": 0,
     "debate_controversy": 1,
@@ -47,6 +45,25 @@ class RawEvent:
 
 
 @dataclass
+class SortedDBItem:
+    """Represents a previously sorted, LLM-classified item stored in ai-hardware-bot's SQLite DB."""
+    id: int
+    url: str
+    title: str
+    source: str
+    source_type: str
+    published_at: str
+    category: str
+    hardware_domain: str
+    bottleneck_addressed: str
+    specific_tech: str
+    relevance_score: float
+    why_it_matters: str
+    ai_revolution_thesis: str
+    raw_summary: str
+
+
+@dataclass
 class NormalizedCandidate:
     event_id: str
     source_platform: str
@@ -75,26 +92,23 @@ class NormalizedCandidate:
 
 @dataclass
 class LongitudinalTrendSignal:
-    """Represents a genuine multi-day structural trend rather than a single news item."""
+    """Part 1: What is trending right now across broad social & developer channels."""
     trend_key: str
     primary_entity: str
     bottleneck_concept: str
     vertical: str
     candidates: list[NormalizedCandidate] = field(default_factory=list)
-    # 1. Temporal Burst & Acceleration (EWMA + CUSUM)
     ewma_velocity_z: float = 0.0
     acceleration_delta: float = 0.0
     cusum_stat: float = 0.0
-    burst_regime: str = "baseline"  # breakout | accelerating | steady | decaying
-    # 2. Cross-Layer Lead-Lag Causal Propagation
-    origin_layer: str = "primary_engineering"
+    burst_regime: str = "baseline"
+    origin_layer: str = "debate_controversy"
     active_layers: list[str] = field(default_factory=list)
     causal_propagation_score: float = 0.0
     mainstream_saturation_ratio: float = 0.0
-    # 3. Novel Bottleneck Co-Occurrence Drift
     co_occurrence_lift: float = 0.0
     is_novel_coupling: bool = False
-    # 4. Composite Trend Index (80% Longitudinal Structural Signal + 20% Reserved Item Score)
     reserved_item_subscore: float = 0.0
     longitudinal_score: float = 0.0
     unified_trend_index: float = 0.0
+    viral_feature_signature: dict[str, Any] = field(default_factory=dict)

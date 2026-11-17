@@ -1,24 +1,16 @@
-# Tech Trend Researcher (Longitudinal Trend Engine & Editorial Briefs)
+# Tech Trend Researcher (Longitudinal Social Trend Engine & Database Viral Matcher)
 
-## Strict Architectural Separation (`ai-hardware-bot` vs. `tech-trend-researcher`)
+## Distinct Roles Across Both Repositories
 
 | Repository | Distinct Role | Core Responsibilities |
 | --- | --- | --- |
-| **[`jijiji88888/ai-hardware-bot`](https://github.com/jijiji88888/ai-hardware-bot)** ([PR #3](https://github.com/jijiji88888/ai-hardware-bot/pull/3)) | **Multi-Source Ingestion & Time-Series Storage** | Polls/scrapes all external RSS/Atom/API feeds, deduplicates URLs/fingerprints, and persists raw items + engagement observations into `agi_hardware_trends.db` (SQLite WAL mode). |
-| **[`ajsfgu9/tech-trend-researcher`](https://github.com/ajsfgu9/tech-trend-researcher)** | **Longitudinal Trend Discovery & Editorial Intelligence** | Performs **zero** duplicate web scraping. Reads `agi_hardware_trends.db` (`?mode=ro`) over 7d–30d windows to detect structural trends and generate ready-to-draft **Automated Content Briefs** (`content_briefs.json`). |
+| **[`jijiji88888/ai-hardware-bot`](https://github.com/jijiji88888/ai-hardware-bot)** ([PR #4](https://github.com/jijiji88888/ai-hardware-bot/pull/4)) | **Broad Internet Fetcher & LLM Relevance Filter** | Fetches candidate articles, filings, and preprints from the broad internet (`arXiv`, `SEC EDGAR EFTS`, `Semiconductor Engineering`, `ServeTheHome`, `DIGITIMES`, `TrendForce`, `Techmeme`, `Hacker News`) and uses its OpenRouter LLM classifier (`classify_batch`) to filter relevant items and extract `hardware_domain`, `bottleneck_addressed`, `specific_tech`, `relevance_score`, `why_it_matters`, and `ai_revolution_thesis` into `agi_hardware_trends.db`. |
+| **[`ajsfgu9/tech-trend-researcher`](https://github.com/ajsfgu9/tech-trend-researcher)** | **Social Trend Researcher & Viral Feature Matcher** | Monitors broad social & developer channels (`Reddit`, `Hacker News`, `GitHub`), detects longitudinal trends via EWMA/CUSUM burst & causal propagation (`src/trend_analyzer.py`), and cross-compares active trends against the previously sorted items in `agi_hardware_trends.db` (`src/viral_matcher.py`). |
 
-## How "Real Trends" Are Studied (`src/trend_analyzer.py`)
+## Two-Part Final Output (`content_briefs.json` & `dashboard.md`)
 
-Instead of relying on static point-in-time item scores or simple social cross-matching, `tech-trend-researcher` models a trend as a **longitudinal trajectory over time** across four quantitative pillars (with item-level scoring reserved strictly as a **20% sub-component**):
-
-1. **Temporal Burst & Second-Order Acceleration (EWMA + Page-Hinkley / CUSUM)**:
-   - Aggregates candidate items into daily/windowed buckets per `(Bottleneck Concept, Entity)` in `concept_timeseries`.
-   - Computes Exponentially Weighted Moving Average ($z_{\text{EWMA}}$), second-order velocity acceleration ($\Delta v = v_t - v_{t-1}$), and the cumulative sum ($\text{CUSUM}_t$) regime-shift statistic to classify trajectories into `breakout`, `accelerating`, `steady`, or `decaying`.
-2. **Cross-Layer Causal Propagation Graph (Lead-Lag S-Curve Diffusion)**:
-   - Tracks the chronological arrival order of a bottleneck across source layers:
-     `Primary Engineering (Stage 0: arXiv/GitHub/Patents)` $\rightarrow$ `Debate & Controversy (Stage 1: HN/Reddit)` $\rightarrow$ `Supply Chain & Financial (Stage 2: SemiAnalysis/TrendForce/SEC)` $\rightarrow$ `Mainstream Media (Stage 3)`.
-   - Rewards trajectories originating in Stage 0/1 that propagate into Stage 2 *before* Stage 3 mainstream saturation.
-3. **Novel Bottleneck Co-Occurrence Shift**:
-   - Compares current `(Entity, Bottleneck)` coupling frequency against historical co-occurrence baselines in `entity_graph` to surface newly emerging constraints (e.g., `TSMC` + `3.5x reticle interposer warpage`).
-4. **Reserved Item Sub-Score (20% Weight) & Executive Editor Framing (`src/scoring_engine.py`, `src/llm_auditor.py`)**:
-   - Retains the item-level viral/information-asymmetry score ($M_{\text{viral}}$) as a 20% tie-breaker alongside the 80% Longitudinal Structural Score, then applies the Executive Editor prompt ($\Phi_{\text{editorial}}$) to generate `content_briefs.json` and `dashboard.md`.
+1. **`output_1_trending_now`**:
+   - Ranked longitudinal trends discovered across the pipeline, including EWMA velocity $z$-score, second-order acceleration $\Delta v$, CUSUM regime state (`breakout`, `accelerating`, `steady`), cross-layer causal propagation chain, and the Executive Editor's narrative framework (`the_hook`, `the_misconception`, `the_engineering_truth`, `the_conflict`).
+2. **`output_2_database_viral_matches` (`src/viral_matcher.py`)**:
+   - Cross-compares the viral feature signature of every active trend in Output 1 against the previously sorted items in `agi_hardware_trends.db` (`bottleneck_addressed`, `specific_tech`, `hardware_domain`, entities, and LLM `relevance_score`).
+   - Outputs `"has_viral_db_matches": "YES"` with the exact list of matching database items (`matched_database_items`) and their shared viral features if any match is found, or `"has_viral_db_matches": "NO"` if none match.
