@@ -2,10 +2,31 @@ services:
   tech-trend-researcher:
     build: .
     container_name: tech-trend-researcher
+    restart: unless-stopped
     env_file:
       - .env
     volumes:
-      - ./data:/app/data
-      # Read-only mount to ai-hardware-bot's SQLite database directory (for WAL companion files)
-      - /path/to/ai-hardware-bot/data:/data/ai_hardware_bot:ro
-    restart: unless-stopped
+      - researcher-data:/app/data
+      # Read-only external named volumes from the 3 existing bots.
+      # No need to convert your 3 bots to bind mounts: db_bridge.py safely
+      # snapshots WAL files into private /tmp when a mount is :ro or cross-UID.
+      - ai_hardware_bot_data:/data/ai_hardware_bot:ro
+      - frontier_deeptech_bot_data:/data/frontier_deeptech_bot:ro
+      - ai_software_stack_bot_data:/data/ai_software_stack_quantum_bot:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  researcher-data:
+  ai_hardware_bot_data:
+    external: true
+    name: ${HARDWARE_BOT_VOLUME:-ai-hardware-bot_bot-data}
+  frontier_deeptech_bot_data:
+    external: true
+    name: ${DEEPTECH_BOT_VOLUME:-frontier-deeptech-bot_bot-data}
+  ai_software_stack_bot_data:
+    external: true
+    name: ${SOFTWARE_BOT_VOLUME:-ai-software-stack-quantum-bot_bot-data}
